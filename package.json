@@ -1,0 +1,22 @@
+{
+  "name": "kafi",
+  "private": true,
+  "packageManager": "pnpm@8.15.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"pnpm -C packages/renderer dev\" \"pnpm -C packages/desktop dev\" \"pnpm -C packages/server dev\"",
+    "build": "pnpm -C packages/renderer build && pnpm -C packages/desktop build && pnpm -C packages/server build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
+    "@types/three": "^0.183.1",
+    "ollama": "^0.6.3",
+    "three": "^0.183.2"
+  }
+}

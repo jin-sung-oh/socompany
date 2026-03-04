@@ -1,0 +1,19 @@
+{
+  "name": "@kafi/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "concurrently \"tsc -p tsconfig.json --watch\" \"node scripts/copy-preload.mjs\" \"cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron dist/index.js\"",
+    "build": "tsc -p tsconfig.json && node scripts/copy-preload.mjs"
+  },
+  "dependencies": {
+    "electron": "^28.2.4"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "typescript": "^5.5.4"
+  }
+}

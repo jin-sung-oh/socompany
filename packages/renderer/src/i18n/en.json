@@ -1,0 +1,66 @@
+{
+  "settings": {
+    "title": "Settings",
+    "ollama_model": "Ollama Model",
+    "api_key": "API Key",
+    "theme": {
+      "label": "Theme",
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark"
+    },
+    "widget_opacity": "Widget Opacity",
+    "language": {
+      "label": "Language",
+      "ko": "Korean",
+      "en": "English"
+    },
+    "character_type": {
+      "label": "Character Type",
+      "3d": "3D Capybara (Interactive)",
+      "video": "Video (MP4)"
+    },
+    "agent_persona": {
+      "title": "Agent Persona Settings",
+      "name": "Name",
+      "description": "Description",
+      "tone": {
+        "label": "Tone",
+        "friendly": "Friendly",
+        "professional": "Professional",
+        "strict": "Strict",
+        "casual": "Casual"
+      },
+      "instructions": {
+        "label": "Instructions",
+        "placeholder": "Enter instructions one per line."
+      }
+    },
+    "save": "Save Settings",
+    "saving": "Saving...",
+    "saved": "Saved!",
+    "no_agents": "No agents configured."
+  },
+  "widget": {
+    "chat_placeholder": "Message...",
+    "empty_chat": "Ask me anything!",
+    "ollama_disconnected": "Ollama is not running. Please check the connection status in the app settings.",
+    "chat_error": "An error occurred while communicating with the server.",
+    "model_not_found": "Sorry, I didn't receive a response. Please check if the model is installed.",
+    "click_to_chat": "Click to chat"
+  },
+  "dashboard": {
+    "title": "KAFI Desktop Assistant",
+    "subtitle": "Smart working environment with AI agent teams",
+    "agent_status": "Agent Status",
+    "recent_logs": "Recent Activity Logs",
+    "team_board": "Team Board",
+    "status": {
+      "idle": "Idle",
+      "working": "Working",
+      "thinking": "Thinking",
+      "completed": "Completed",
+      "error": "Error"
+    }
+  }
+}
