@@ -1,2 +1,3 @@
-export * from "./types/agent.js";
-export * from "./types/team.js";
+export * from "./types/agent";
+export * from "./types/settings";
+export * from "./types/team";

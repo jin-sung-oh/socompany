@@ -16,6 +16,7 @@ const getViewMode = () => {
 export const App = () => {
   const viewMode = useMemo(getViewMode, []);
   const setAgents = useAgentStore((state) => state.setAgents);
+  const mergeAgentUpdates = useAgentStore((state) => state.mergeAgentUpdates);
   const updateAgentStatus = useAgentStore((state) => state.updateAgentStatus);
   const addLog = useLogStore((state) => state.addLog);
 
@@ -36,14 +37,14 @@ export const App = () => {
       }
       const agents = await window.kafi.getAgents();
       setAgents(agents);
-      unsubAgents = window.kafi.subscribeAgents(setAgents);
+      unsubAgents = window.kafi.subscribeAgents(mergeAgentUpdates);
       unsubLogs = window.kafi.subscribeLogs(addLog);
     };
 
     const connectSocket = () => {
       socket = io("http://localhost:3001", {
         transports: ["websocket"],
-        timeout: 1200
+        timeout: 1200,
       });
 
       socket.on("connect", () => {
@@ -60,7 +61,7 @@ export const App = () => {
 
       socket.on("agent:list", (payload: { agents?: AgentSummary[] }) => {
         if (payload && Array.isArray(payload.agents)) {
-          setAgents(payload.agents);
+          mergeAgentUpdates(payload.agents);
         }
       });
 
@@ -91,7 +92,7 @@ export const App = () => {
       unsubAgents?.();
       unsubLogs?.();
     };
-  }, [addLog, setAgents, updateAgentStatus]);
+  }, [addLog, mergeAgentUpdates, setAgents, updateAgentStatus]);
 
   return viewMode === "widget" ? <WidgetView /> : <DashboardView />;
 };

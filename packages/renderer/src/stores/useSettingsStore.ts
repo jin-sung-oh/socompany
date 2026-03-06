@@ -1,25 +1,8 @@
 import { create } from "zustand";
-import { Agent } from "@kafi/shared";
+import type { AppSettings } from "@kafi/shared";
+import { createDefaultSettings, normalizeSettings } from "../data/agentCatalog";
 
-export type SettingsPayload = {
-  apiKey: string;
-  theme: "light" | "dark" | "system";
-  ollamaModel: string;
-  agents: Agent[];
-  widgetOpacity: number;
-  language: "ko" | "en";
-  characterType: "3d" | "video";
-};
-
-const defaultSettings: SettingsPayload = {
-  apiKey: "",
-  theme: "system",
-  ollamaModel: "llama2",
-  agents: [],
-  widgetOpacity: 100,
-  language: "ko",
-  characterType: "video"
-};
+export type SettingsPayload = AppSettings;
 
 type SettingsState = {
   settings: SettingsPayload;
@@ -30,24 +13,24 @@ type SettingsState = {
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  settings: defaultSettings,
+  settings: createDefaultSettings(),
   status: "idle",
-  setSettings: (next) => set({ settings: next }),
+  setSettings: (next) => set({ settings: normalizeSettings(next) }),
   load: async () => {
     if (!window.kafi?.getSettings) {
       return;
     }
     set({ status: "loading" });
     const stored = await window.kafi.getSettings();
-    set({ settings: { ...defaultSettings, ...stored }, status: "idle" });
+    set({ settings: normalizeSettings(stored), status: "idle" });
   },
   save: async () => {
     if (!window.kafi?.setSettings) {
       return;
     }
     set({ status: "saving" });
-    await window.kafi.setSettings(get().settings);
+    await window.kafi.setSettings(normalizeSettings(get().settings));
     set({ status: "saved" });
     window.setTimeout(() => set({ status: "idle" }), 1500);
-  }
+  },
 }));

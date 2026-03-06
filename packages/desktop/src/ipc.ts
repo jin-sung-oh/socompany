@@ -1,24 +1,21 @@
 import { ipcMain } from "electron";
 import type { WebContents } from "electron";
+import type { Agent } from "@kafi/shared";
 import { readSettings, writeSettings } from "./settings.js";
+import { buildAgentSystemPrompt, normalizeSettings } from "./agentCatalog.js";
 import { Ollama } from "ollama";
 
-const statusCycle: Array<
-  "idle" | "thinking" | "working" | "completed"
-> = ["idle", "thinking", "working", "completed"];
+const statusCycle: Agent["status"][] = ["idle", "thinking", "working", "completed"];
 
-type AgentSummary = {
-  id: string;
-  name: string;
-  role: string;
-  status: (typeof statusCycle)[number];
-};
+type AgentUpdate = Pick<Agent, "id" | "name" | "species" | "role" | "status">;
 
-let agents: AgentSummary[] = [
-  { id: "agent-1", name: "리뷰어", role: "code-reviewer", status: "working" },
-  { id: "agent-2", name: "문서", role: "doc-writer", status: "idle" },
-  { id: "agent-3", name: "테스터", role: "tester", status: "thinking" }
-];
+let agents: AgentUpdate[] = normalizeSettings(readSettings()).agents.map((agent) => ({
+  id: agent.id,
+  name: agent.name,
+  species: agent.species,
+  role: agent.role,
+  status: agent.status,
+}));
 
 const logSubscribers = new Set<WebContents>();
 const agentSubscribers = new Set<WebContents>();
@@ -32,6 +29,23 @@ const addSubscriber = (set: Set<WebContents>, sender: WebContents) => {
 
 let intervalStarted = false;
 
+const refreshAgentUpdates = () => {
+  const settings = normalizeSettings(readSettings());
+  agents = settings.agents.map((agent, index) => ({
+    id: agent.id,
+    name: agent.name,
+    species: agent.species,
+    role: agent.role,
+    status: agents[index]?.status ?? agent.status,
+  }));
+};
+
+const broadcastAgents = () => {
+  agentSubscribers.forEach((subscriber) => {
+    subscriber.send("kafi:agents-updated", agents);
+  });
+};
+
 const startMockStreams = () => {
   if (intervalStarted) {
     return;
@@ -39,21 +53,32 @@ const startMockStreams = () => {
   intervalStarted = true;
 
   setInterval(() => {
-    const first = agents[0];
-    if (first) {
-      const index = statusCycle.indexOf(first.status);
-      const nextStatus = statusCycle[(index + 1) % statusCycle.length];
-      agents = [
-        { ...first, status: nextStatus },
-        ...agents.slice(1)
-      ];
+    if (agents.length === 0) {
+      refreshAgentUpdates();
     }
 
-    agentSubscribers.forEach((subscriber) => {
-      subscriber.send("kafi:agents-updated", agents);
+    const nextAgents = [...agents];
+    const rotatingIndex = Math.floor(Date.now() / 4000) % Math.max(1, nextAgents.length);
+
+    nextAgents.forEach((agent, index) => {
+      if (index === rotatingIndex) {
+        const currentIndex = statusCycle.indexOf(agent.status);
+        agent.status = statusCycle[(currentIndex + 1) % statusCycle.length];
+        return;
+      }
+      if (agent.status !== "idle") {
+        agent.status = "idle";
+      }
     });
 
-    const logLine = `작업 로그 ${new Date().toLocaleTimeString()}`;
+    agents = nextAgents;
+    broadcastAgents();
+
+    const activeAgent = agents[rotatingIndex];
+    const logLine = activeAgent
+      ? `${activeAgent.name}(${activeAgent.role}) 상태 변경: ${activeAgent.status}`
+      : `작업 로그 ${new Date().toLocaleTimeString()}`;
+
     logSubscribers.forEach((subscriber) => {
       subscriber.send("kafi:log-line", logLine);
     });
@@ -65,7 +90,10 @@ export const registerIpcHandlers = () => {
 
   ipcMain.handle("kafi:get-settings", () => readSettings());
   ipcMain.handle("kafi:set-settings", (_event, payload) => {
-    writeSettings(payload);
+    const normalized = normalizeSettings(payload);
+    writeSettings(normalized);
+    refreshAgentUpdates();
+    broadcastAgents();
   });
 
   ipcMain.handle("kafi:get-agents", () => {
@@ -73,23 +101,28 @@ export const registerIpcHandlers = () => {
     return settings.agents;
   });
 
-  // Ollama 채팅 핸들러
-  ipcMain.handle("kafi:ollama-chat", async (_event, message: string) => {
+  ipcMain.handle("kafi:ollama-chat", async (_event, payload: { message: string; agentId?: string } | string) => {
     try {
       const settings = readSettings();
       const model = settings.ollamaModel || "llama2";
-      const agent = settings.agents[0]; // For now, use the first agent
+      const message = typeof payload === "string" ? payload : payload.message;
+      const agentId = typeof payload === "string" ? undefined : payload.agentId;
+      const agent = agentId ? settings.agents.find((item) => item.id === agentId) : settings.agents[0];
 
-      let systemPrompt = "You are a helpful AI assistant.";
-      if (agent && agent.persona) {
-        systemPrompt = `You are ${agent.name}. ${agent.persona.description}. Tone: ${agent.persona.tone}. Instructions: ${agent.persona.instructions.join(" ")}`;
+      if (!message || message.trim().length === 0) {
+        return {
+          success: false,
+          error: "메시지가 필요합니다.",
+        };
       }
 
+      const systemPrompt = agent ? buildAgentSystemPrompt(agent) : "항상 한국어로 답변하는 유능한 동물 사원으로 행동하세요.";
       const response = await ollama.generate({
         model,
         system: systemPrompt,
         prompt: message,
         stream: false,
+        options: settings.ollamaParameters,
       });
 
       return {
@@ -105,7 +138,6 @@ export const registerIpcHandlers = () => {
     }
   });
 
-  // Ollama 모델 목록 가져오기
   ipcMain.handle("kafi:get-ollama-models", async () => {
     try {
       const response = await ollama.list();
@@ -116,7 +148,6 @@ export const registerIpcHandlers = () => {
     }
   });
 
-  // Ollama 연결 확인
   ipcMain.handle("kafi:ollama-check", async () => {
     try {
       await ollama.list();
@@ -133,6 +164,8 @@ export const registerIpcHandlers = () => {
 
   ipcMain.on("kafi:subscribe-agents", (event) => {
     addSubscriber(agentSubscribers, event.sender);
+    refreshAgentUpdates();
+    broadcastAgents();
     startMockStreams();
   });
 

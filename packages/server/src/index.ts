@@ -1,21 +1,24 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import fastifySocketIO from "@fastify/socket.io";
+import fastifySocketIO from "fastify-socket.io";
+import type { Server as SocketIOServer, Socket } from "socket.io";
 import agentRoutes from "./routes/agent.routes.js";
 import { enqueueTask, primeConnection, setEmitter } from "./orchestrator.js";
 
 const fastify = Fastify({
-  logger: true
+  logger: true,
 });
 
+const getIO = () => (fastify as typeof fastify & { io: SocketIOServer }).io;
+
 fastify.register(cors, {
-  origin: true
+  origin: true,
 });
 
 fastify.register(fastifySocketIO, {
   cors: {
-    origin: "*"
-  }
+    origin: "*",
+  },
 });
 
 fastify.register(agentRoutes, { prefix: "/api" });
@@ -25,13 +28,13 @@ fastify.get("/health", async () => {
 });
 
 setEmitter((event, payload) => {
-  fastify.io.emit(event, payload);
+  getIO().emit(event, payload);
 });
 
 fastify.ready((err) => {
   if (err) throw err;
 
-  fastify.io.on("connection", (socket) => {
+  getIO().on("connection", (socket: Socket) => {
     fastify.log.info(`Client connected: ${socket.id}`);
     primeConnection();
 

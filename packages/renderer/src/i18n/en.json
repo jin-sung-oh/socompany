@@ -17,8 +17,8 @@
     },
     "character_type": {
       "label": "Character Type",
-      "3d": "3D Capybara (Interactive)",
-      "video": "Video (MP4)"
+      "3d": "3D Experimental View",
+      "video": "Video / Standard View"
     },
     "agent_persona": {
       "title": "Agent Persona Settings",
@@ -43,7 +43,7 @@
   },
   "widget": {
     "chat_placeholder": "Message...",
-    "empty_chat": "Ask me anything!",
+    "empty_chat": "Ask or assign work to the animal agents.",
     "ollama_disconnected": "Ollama is not running. Please check the connection status in the app settings.",
     "chat_error": "An error occurred while communicating with the server.",
     "model_not_found": "Sorry, I didn't receive a response. Please check if the model is installed.",

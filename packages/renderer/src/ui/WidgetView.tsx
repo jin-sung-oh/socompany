@@ -1,230 +1,182 @@
-import { useEffect, useState, Suspense, useRef, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { X, Send, AlertCircle, Sparkles } from "lucide-react";
 import { useAgentStore } from "../stores/useAgentStore";
 import { useChatStore } from "../stores/useChatStore";
 import { useSettingsStore } from "../stores/useSettingsStore";
 import { useTranslation } from "../hooks/useTranslation";
-import { Capybara3D } from "./Capybara3D";
-import { CapybaraAvatar } from "./CapybaraAvatar";
-import { X, Send, Trash2, AlertCircle } from "lucide-react";
+import { getAgentAsset, getSpeciesMeta } from "../data/agentCatalog";
 
-const states = ["idle", "thinking", "working", "completed"] as const;
-
+const states = ["idle", "thinking", "working", "completed", "error"] as const;
 type WidgetState = (typeof states)[number];
 
 export const WidgetView = () => {
   const agents = useAgentStore((state) => state.agents);
-  const { messages, addMessage, clearHistory } = useChatStore();
+  const addMessage = useChatStore((state) => state.addMessage);
+  const messagesByAgent = useChatStore((state) => state.messagesByAgent);
+  const updateAgentStatus = useAgentStore((state) => state.updateAgentStatus);
   const { settings, load: loadSettings } = useSettingsStore();
   const { t } = useTranslation();
-  const [state, setState] = useState<WidgetState>(agents[0]?.status ?? "idle");
+  const pmAgent = useMemo(() => agents.find((agent) => agent.role === "PM Agent") ?? agents[0] ?? null, [agents]);
+  const species = pmAgent ? getSpeciesMeta(pmAgent.species) : null;
+  const [state, setState] = useState<WidgetState>(pmAgent?.status ?? "idle");
   const [inputValue, setInputValue] = useState("");
   const [showChat, setShowChat] = useState(false);
-  const [isOllamaAvailable, setIsOllamaAvailable] = useState<boolean | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
-
-  // Memoized checkOllama function
-  const checkOllama = useCallback(async () => {
-    if (!window.kafi?.ollamaCheck) return;
-    const result = await window.kafi.ollamaCheck();
-    setIsOllamaAvailable(result.connected);
-  }, []);
+  const messages = pmAgent ? messagesByAgent[pmAgent.id] ?? [] : [];
 
   useEffect(() => {
     void loadSettings();
-    checkOllama();
-  }, [loadSettings, checkOllama]);
+  }, [loadSettings]);
 
   useEffect(() => {
-    if (agents[0]?.status) {
-      setState(agents[0].status as WidgetState);
+    if (pmAgent?.status && states.includes(pmAgent.status as WidgetState)) {
+      setState(pmAgent.status as WidgetState);
     }
-  }, [agents]);
+  }, [pmAgent]);
 
   useEffect(() => {
     if (showChat) {
-      scrollToBottom();
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [showChat, messages]);
+  }, [messages, showChat]);
 
-  // Memoized scroll function
-  const scrollToBottom = useCallback(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
-
-  // Memoized send handler with loading state and error handling
-  const handleSend = useCallback(async () => {
-    if (!inputValue.trim() || !window.kafi || isLoading) return;
+  const handleSend = async () => {
+    if (!inputValue.trim() || !window.kafi || isLoading || !pmAgent) {
+      return;
+    }
 
     setError(null);
     setIsLoading(true);
+    setState("thinking");
+    updateAgentStatus(pmAgent.id, "thinking");
 
-    // Check connection
     const check = await window.kafi.ollamaCheck();
     if (!check.connected) {
-      setIsOllamaAvailable(false);
-      setError(t("widget.ollama_disconnected"));
-      addMessage("assistant", t("widget.ollama_disconnected"));
+      const disconnected = t("widget.ollama_disconnected");
+      setError(disconnected);
+      addMessage(pmAgent.id, "assistant", disconnected);
+      setState("error");
+      updateAgentStatus(pmAgent.id, "error");
       setIsLoading(false);
       return;
     }
 
-    const userMsg = inputValue;
+    const userMsg = inputValue.trim();
     setInputValue("");
-    addMessage("user", userMsg);
-    setState("thinking");
+    addMessage(pmAgent.id, "user", userMsg);
 
     try {
-      const result = await window.kafi.ollamaChat(userMsg);
-
+      const result = await window.kafi.ollamaChat({ message: userMsg, agentId: pmAgent.id });
       if (result.success && result.response) {
-        addMessage("assistant", result.response);
+        addMessage(pmAgent.id, "assistant", result.response);
         setState("completed");
-        setError(null);
+        updateAgentStatus(pmAgent.id, "completed");
       } else {
         const errorMsg = result.error || t("widget.model_not_found");
         setError(errorMsg);
-        addMessage("assistant", errorMsg);
-        setState("idle");
+        addMessage(pmAgent.id, "assistant", errorMsg);
+        setState("error");
+        updateAgentStatus(pmAgent.id, "error");
       }
     } catch (err) {
       const errorMsg = t("widget.chat_error");
       setError(errorMsg);
-      addMessage("assistant", errorMsg);
-      setState("idle");
+      addMessage(pmAgent.id, "assistant", errorMsg);
+      setState("error");
+      updateAgentStatus(pmAgent.id, "error");
     } finally {
       setIsLoading(false);
+      window.setTimeout(() => {
+        setState("idle");
+        updateAgentStatus(pmAgent.id, "idle");
+      }, 1000);
     }
-  }, [inputValue, isLoading, addMessage, t, setState]);
+  };
 
-  // Memoized toggle chat handler
-  const toggleChat = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setShowChat(prev => !prev);
-    setError(null);
-    // Click feedback animation
-    if (!showChat) {
-      setState("working");
-      setTimeout(() => setState("idle"), 500);
-    }
-  }, [showChat]);
-
-  // Helper function to format timestamp
-  const formatTime = useCallback((timestamp: number) => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }, []);
+  if (!pmAgent || !species) {
+    return null;
+  }
 
   return (
-    <div style={{
-      width: '250px',
-      height: '250px',
-      background: 'linear-gradient(135deg, #fef9f3, #f9e4c7)',
-      borderRadius: '20px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      opacity: settings.widgetOpacity / 100,
-      position: 'relative'
-    }}>
-      {/* 카피바라 표시 */}
-      <div
-        onClick={toggleChat}
-        style={{
-          fontSize: '120px',
-          cursor: 'pointer',
-          userSelect: 'none',
-          WebkitUserSelect: 'none'
-        }}
-        title={t("widget.click_to_chat")}
-      >
-        🦫
+    <div className="ceo-widget-shell" style={{ opacity: settings.widgetOpacity / 100 }}>
+      <div className="ceo-widget-card">
+        <div className="ceo-widget-header">
+          <div>
+            <p>CEO Hotline</p>
+            <strong>{pmAgent.name}</strong>
+          </div>
+          <div className="ceo-widget-state">{state}</div>
+        </div>
+
+        <button type="button" className="ceo-widget-avatar" onClick={() => setShowChat((prev) => !prev)} aria-label={t("widget.click_to_chat")}>
+          {getAgentAsset(pmAgent)}
+        </button>
+
+        <div className="ceo-widget-footer">
+          <span>{species.label} · {pmAgent.role}</span>
+          <Sparkles size={14} />
+        </div>
       </div>
 
-      {/* 채팅 말풍선 */}
       {showChat && (
-        <div className="chat-bubble-container" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Chat interface">
-          <div className="chat-bubble-v2">
-            <div className="chat-messages-container">
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-2)' }}>
-                <button
-                  className="icon-btn-sm"
-                  onClick={() => setShowChat(false)}
-                  aria-label="Close chat"
-                  title={t("widget.close") || "Close"}
-                >
-                  <X size={14} />
-                </button>
+        <div className="ceo-widget-chat" role="dialog" aria-label="PM 빠른 대화">
+          <div className="ceo-widget-chat-header">
+            <div>
+              <strong>{pmAgent.name}</strong>
+              <p>사장님의 지시를 PM이 바로 받습니다.</p>
+            </div>
+            <button type="button" className="icon-btn-sm" onClick={() => setShowChat(false)} aria-label="닫기">
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="ceo-widget-chat-body">
+            {error && (
+              <div className="error-box" style={{ marginBottom: "var(--space-2)" }}>
+                <AlertCircle size={16} />
+                <span>{error}</span>
               </div>
+            )}
 
-              {/* Error banner */}
-              {error && (
-                <div className="error-box" style={{ marginBottom: 'var(--space-2)' }}>
-                  <AlertCircle size={16} />
-                  <span>{error}</span>
+            {messages.length === 0 ? (
+              <div className="ceo-empty-state">PM에게 첫 지시를 내려보세요.</div>
+            ) : (
+              messages.map((msg) => (
+                <div key={msg.id} className={`ceo-chat-bubble ${msg.role}`}>
+                  <div>{msg.content}</div>
+                  <time>{new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
                 </div>
-              )}
+              ))
+            )}
 
-              {messages.length === 0 ? (
-                <div className="empty-chat" role="status">
-                  {t("widget.empty_chat")}
+            {isLoading && (
+              <div className="ceo-chat-bubble assistant">
+                <div className="flex items-center gap-1">
+                  <span className="animate-pulse">●</span>
+                  <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
+                  <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
                 </div>
-              ) : (
-                <>
-                  {messages.map((msg) => (
-                    <div key={msg.id} className={`chat-message-row ${msg.role}`}>
-                      <div className="message-bubble">
-                        <div>{msg.content}</div>
-                        <div style={{
-                          fontSize: 'var(--text-xs)',
-                          color: msg.role === 'user' ? 'rgba(255,255,255,0.7)' : 'var(--color-text-tertiary)',
-                          marginTop: 'var(--space-1)',
-                          textAlign: msg.role === 'user' ? 'right' : 'left'
-                        }}>
-                          {formatTime(msg.timestamp)}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
 
-                  {/* Typing indicator */}
-                  {isLoading && (
-                    <div className="chat-message-row assistant">
-                      <div className="message-bubble">
-                        <div className="flex items-center gap-1">
-                          <span className="animate-pulse">●</span>
-                          <span className="animate-pulse" style={{ animationDelay: '0.2s' }}>●</span>
-                          <span className="animate-pulse" style={{ animationDelay: '0.4s' }}>●</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-
-            <div className="chat-input-area">
-              <input
-                type="text"
-                className="pet-chat-input-v2"
-                placeholder={t("widget.chat_placeholder")}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-                disabled={isLoading}
-                aria-label="Message input"
-              />
-              <button
-                className="send-btn-v2"
-                onClick={handleSend}
-                disabled={!inputValue.trim() || isLoading}
-                aria-label="Send message"
-              >
-                <Send size={16} />
-              </button>
-            </div>
+          <div className="ceo-widget-chat-input">
+            <input
+              type="text"
+              className="pet-chat-input-v2"
+              placeholder="PM에게 작업 지시를 내려보세요"
+              value={inputValue}
+              onChange={(event) => setInputValue(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && !event.shiftKey && void handleSend()}
+              disabled={isLoading}
+              aria-label="PM 메시지 입력"
+            />
+            <button type="button" className="send-btn-v2" onClick={() => void handleSend()} disabled={!inputValue.trim() || isLoading} aria-label="전송">
+              <Send size={16} />
+            </button>
           </div>
         </div>
       )}

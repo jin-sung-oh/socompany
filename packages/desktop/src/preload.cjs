@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld("kafi", {
       ipcRenderer.send("kafi:unsubscribe-logs");
     };
   },
-  ollamaChat: (message) => ipcRenderer.invoke("kafi:ollama-chat", message),
+  ollamaChat: (payload) => ipcRenderer.invoke("kafi:ollama-chat", payload),
   getOllamaModels: () => ipcRenderer.invoke("kafi:get-ollama-models"),
   ollamaCheck: () => ipcRenderer.invoke("kafi:ollama-check")
 });

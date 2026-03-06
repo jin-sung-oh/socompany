@@ -6,6 +6,17 @@ export interface CharacterConfig {
   errorAsset: string;
 }
 
+export const animalSpecies = [
+  "capybara",
+  "pig",
+  "fox",
+  "tiger",
+  "dog",
+  "cat",
+] as const;
+
+export type AnimalSpecies = (typeof animalSpecies)[number];
+
 export interface Task {
   id: string;
   title: string;
@@ -21,20 +32,13 @@ export interface Persona {
 export interface Agent {
   id: string;
   name: string;
-  role: AgentRole;
+  species: AnimalSpecies;
+  role: string;
   character: CharacterConfig;
   status: AgentStatus;
   currentTask: Task | null;
   persona?: Persona;
 }
-
-export type AgentRole =
-  | "code-reviewer"
-  | "doc-writer"
-  | "tester"
-  | "planner"
-  | "designer"
-  | "custom";
 
 export type AgentStatus =
   | "idle"

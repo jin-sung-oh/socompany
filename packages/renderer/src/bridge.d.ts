@@ -1,16 +1,18 @@
+import type { Agent, AgentStatus, AppSettings } from "@kafi/shared";
+
 export {};
+
+type AgentUpdate = Pick<Agent, "id"> & Partial<Agent> & { status?: AgentStatus };
 
 declare global {
   interface Window {
     kafi?: {
-      getSettings: () => Promise<{ apiKey: string; theme: "light" | "dark" | "system"; ollamaModel: string }>;
-      setSettings: (payload: { apiKey: string; theme: "light" | "dark" | "system"; ollamaModel: string }) => Promise<void>;
-      getAgents: () => Promise<Array<{ id: string; name: string; role: string; status: "idle" | "thinking" | "working" | "completed" | "error" }>>;
-      subscribeAgents: (
-        callback: (agents: Array<{ id: string; name: string; role: string; status: "idle" | "thinking" | "working" | "completed" | "error" }>) => void
-      ) => () => void;
+      getSettings: () => Promise<Partial<AppSettings>>;
+      setSettings: (payload: AppSettings) => Promise<void>;
+      getAgents: () => Promise<Agent[]>;
+      subscribeAgents: (callback: (agents: AgentUpdate[]) => void) => () => void;
       subscribeLogs: (callback: (line: string) => void) => () => void;
-      ollamaChat: (message: string) => Promise<{ success: boolean; response?: string; error?: string }>;
+      ollamaChat: (payload: { message: string; agentId?: string } | string) => Promise<{ success: boolean; response?: string; error?: string }>;
       getOllamaModels: () => Promise<{ success: boolean; models?: Array<{ name: string }>; error?: string }>;
       ollamaCheck: () => Promise<{ connected: boolean }>;
     };

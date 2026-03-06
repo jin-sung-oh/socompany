@@ -13,7 +13,7 @@
 
 ## 2. 구조
 - `packages/desktop`: Electron 메인 프로세스, IPC 핸들러, 설정 관리, 트레이 아이콘
-- `packages/renderer`: React UI, 3D 위젯, 대시보드, 설정 패널
+- `packages/renderer`: React UI, 2D 픽셀 타이쿤 대시보드(메인), 위젯, 설정 패널
 - `packages/shared`: 공통 타입 정의
 - `packages/server`: (예정) 백엔드 서버 기능
 
@@ -23,13 +23,13 @@
   1. Electron 실행 후 메인 윈도우(대시보드)와 위젯 윈도우 생성
   2. IPC를 통해 Ollama 로컬 서버와 통신 설정
   3. 렌더러에서 Zustand 스토어를 통해 상태 공유 및 UI 업데이트
-  4. 사용자가 위젯을 통해 LLM과 대화하거나 대시보드에서 에이전트 상태 모니터링
+  4. 사용자가 2D 픽셀 오피스 대시보드에서 에이전트 팀의 활동을 타이쿤 게임처럼 모니터링 및 지시
 
 ## 4. 핵심 파일
 - `packages/desktop/src/ipc.ts`: Ollama 통신 및 에이전트 상태 시뮬레이션
-- `packages/renderer/src/ui/Capybara3D.tsx`: 3D 카피바라 모델 및 애니메이션 로직
+- `packages/renderer/src/ui/OfficeDashboard2D.tsx`: 2D 픽셀 아트 스타일의 오피스 타이쿤 뷰
 - `packages/renderer/src/ui/WidgetView.tsx`: 위젯 UI 및 채팅 인터페이스
-- `packages/renderer/src/ui/DashboardView.tsx`: 에이전트 팀 현황 대시보드
+- `packages/renderer/src/stores/useAgentStore.ts`: 에이전트 위치, 상태, 이동 로직 관리
 - `packages/renderer/src/stores/useChatStore.ts`: 채팅 기록 영속성 관리
 
 ## 5. 설정 / 환경

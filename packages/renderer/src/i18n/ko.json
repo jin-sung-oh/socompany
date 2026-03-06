@@ -17,8 +17,8 @@
     },
     "character_type": {
       "label": "캐릭터 유형",
-      "3d": "3D 카피바라 (Interactive)",
-      "video": "비디오 (MP4)"
+      "3d": "3D 실험 보기",
+      "video": "비디오/일반 보기"
     },
     "agent_persona": {
       "title": "에이전트 페르소나 설정",
@@ -42,8 +42,8 @@
     "no_agents": "설정된 에이전트가 없습니다."
   },
   "widget": {
-    "chat_placeholder": "메세지...",
-    "empty_chat": "궁금한 점을 물어보세요!",
+    "chat_placeholder": "메시지...",
+    "empty_chat": "동물 사원에게 질문하거나 작업을 지시해 보세요.",
     "ollama_disconnected": "Ollama가 실행 중이지 않아요. 앱의 설정 화면에서 연결 상태를 확인해 주세요.",
     "chat_error": "서버와 통신하는 중 에러가 발생했어요.",
     "model_not_found": "죄송해요, 응답을 받지 못했어요. 모델이 설치되어 있는지 확인해 주세요.",
