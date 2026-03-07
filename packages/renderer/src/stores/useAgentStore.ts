@@ -1,12 +1,21 @@
 import { create } from "zustand";
 import type { Agent, AgentStatus } from "@kafi/shared";
 import { createDefaultAgents } from "../data/agentCatalog";
+import type { OfficePoint } from "../data/officeLayout";
+import {
+  clampOfficePosition,
+  distanceBetween,
+  getDirectionFromVector,
+  getNextOfficeWaypoint,
+  getRandomOfficePosition,
+  moveWithinOffice,
+} from "../data/officeNavigation";
 
 export type AgentBehavior = "wandering" | "working" | "resting" | "talking";
 
 export interface AgentState extends Agent {
-  position: { x: number; y: number };
-  targetPosition: { x: number; y: number } | null;
+  position: OfficePoint;
+  targetPosition: OfficePoint | null;
   direction: "left" | "right" | "up" | "down";
   behavior: AgentBehavior;
 }
@@ -17,10 +26,12 @@ type AgentPatch = Partial<Agent> & Pick<Agent, "id">;
 
 interface AgentStore {
   agents: AgentState[];
+  officePlayerPosition: OfficePoint | null;
   setAgents: (agents: Agent[] | AgentState[]) => void;
   mergeAgentUpdates: (agents: AgentPatch[]) => void;
   updateAgent: (id: string, updates: Partial<AgentState>) => void;
   updateAgentStatus: (id: string, status: AgentStatus) => void;
+  setOfficePlayerPosition: (position: OfficePoint | null) => void;
   moveAgents: () => void;
 }
 
@@ -28,6 +39,20 @@ const fallbackPosition = (index: number) => ({
   x: 18 + (index % 3) * 28,
   y: 24 + Math.floor(index / 3) * 28,
 });
+
+const statusToBehavior = (status: AgentStatus): AgentBehavior => {
+  switch (status) {
+    case "working":
+      return "working";
+    case "thinking":
+    case "chatting":
+      return "talking";
+    case "completed":
+      return "resting";
+    default:
+      return "wandering";
+  }
+};
 
 const toAgentState = (agent: Agent | AgentState, index: number, previous?: AgentState): AgentState => ({
   ...agent,
@@ -37,7 +62,7 @@ const toAgentState = (agent: Agent | AgentState, index: number, previous?: Agent
   behavior:
     "behavior" in agent
       ? agent.behavior
-      : previous?.behavior ?? (agent.status === "working" ? "working" : "wandering"),
+      : previous?.behavior ?? statusToBehavior(agent.status),
 });
 
 const mapToAgentStates = (agents: Agent[] | AgentState[], previous: AgentState[] = []): AgentState[] =>
@@ -50,6 +75,7 @@ const initialAgents = mapToAgentStates(createDefaultAgents());
 
 export const useAgentStore = create<AgentStore>((set) => ({
   agents: initialAgents,
+  officePlayerPosition: null,
   setAgents: (agents) => set((state) => ({ agents: mapToAgentStates(agents, state.agents) })),
   mergeAgentUpdates: (updates) =>
     set((state) => ({
@@ -82,52 +108,80 @@ export const useAgentStore = create<AgentStore>((set) => ({
           ? {
               ...agent,
               status,
-              behavior: status === "working" ? "working" : status === "chatting" ? "talking" : agent.behavior,
+              behavior: statusToBehavior(status),
             }
           : agent,
       ),
     })),
+  setOfficePlayerPosition: (position) => set(() => ({ officePlayerPosition: position })),
   moveAgents: () =>
-    set((state) => ({
-      agents: state.agents.map((agent) => {
-        if (agent.behavior === "working") {
-          return agent;
+    set((state) => {
+      const nextAgents: AgentState[] = [];
+      const stationaryObstacles = state.officePlayerPosition ? [state.officePlayerPosition] : [];
+
+      state.agents.forEach((agent, index) => {
+        if (agent.behavior === "working" && !agent.targetPosition) {
+          nextAgents.push(agent);
+          return;
         }
 
         if (!agent.targetPosition) {
-          return {
+          const blockedPositions = [
+            ...stationaryObstacles,
+            ...nextAgents.map((item) => item.position),
+            ...state.agents.slice(index + 1).map((item) => item.position),
+          ];
+
+          nextAgents.push({
             ...agent,
-            targetPosition: {
-              x: 10 + Math.random() * 80,
-              y: 10 + Math.random() * 80,
-            },
-          };
+            targetPosition: getRandomOfficePosition({
+              blockedPositions,
+              collisionRadius: 4.6,
+            }),
+          });
+          return;
         }
 
-        const dx = agent.targetPosition.x - agent.position.x;
-        const dy = agent.targetPosition.y - agent.position.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        if (distance < 1) {
-          return {
+        if (distanceBetween(agent.position, agent.targetPosition) < 1) {
+          nextAgents.push({
             ...agent,
             targetPosition: null,
-            behavior: Math.random() > 0.75 ? "working" : "wandering",
-          };
+            behavior: agent.status === "working" ? "working" : Math.random() > 0.75 ? "working" : "wandering",
+          });
+          return;
+        }
+
+        const waypoint = getNextOfficeWaypoint(agent.position, agent.targetPosition);
+        const dx = waypoint.x - agent.position.x;
+        const dy = waypoint.y - agent.position.y;
+        const waypointDistance = Math.sqrt(dx * dx + dy * dy);
+
+        if (waypointDistance < 0.35) {
+          nextAgents.push({
+            ...agent,
+            position: clampOfficePosition(waypoint.x, waypoint.y),
+          });
+          return;
         }
 
         const speed = 0.38;
-        const vx = (dx / distance) * speed;
-        const vy = (dy / distance) * speed;
+        const vx = (dx / waypointDistance) * speed;
+        const vy = (dy / waypointDistance) * speed;
+        const blockedPositions = [
+          ...stationaryObstacles,
+          ...nextAgents.map((item) => item.position),
+          ...state.agents.slice(index + 1).map((item) => item.position),
+        ];
+        const nextPosition = moveWithinOffice(agent.position, { x: vx, y: vy }, { blockedPositions, collisionRadius: 4.6 });
+        const didMove = distanceBetween(agent.position, nextPosition) > 0.01;
 
-        return {
+        nextAgents.push({
           ...agent,
-          position: {
-            x: Math.max(8, Math.min(92, agent.position.x + vx)),
-            y: Math.max(10, Math.min(90, agent.position.y + vy)),
-          },
-          direction: Math.abs(vx) >= Math.abs(vy) ? (vx >= 0 ? "right" : "left") : vy >= 0 ? "down" : "up",
-        };
-      }),
-    })),
+          position: nextPosition,
+          direction: didMove ? getDirectionFromVector(vx, vy, agent.direction) : agent.direction,
+        });
+      });
+
+      return { agents: nextAgents };
+    }),
 }));

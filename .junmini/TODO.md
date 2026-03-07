@@ -1,8 +1,8 @@
 # TODO
 ## 🔴 진행중
-- [ ] 사장 지시를 PM Agent가 받아 팀에 분배하는 실제 워크플로우 구현
 - [ ] 결과물 중심의 단일 대시보드 구조 확장 (산출물 패널, 진행 흐름, 지시 히스토리)
 - [ ] 플레이어/NPC 거리 기반 상호작용 시스템 구현
+- [ ] doorway pass-through 애니메이션 및 NPC pathfinding 고도화
 
 ## 🟡 예정
 - [ ] 재사용 가능한 컴포넌트 라이브러리 구축 (EmptyState, LoadingSkeleton, TypingIndicator)
@@ -11,6 +11,10 @@
 - [ ] 3D 오피스 뷰를 새 기준에 맞춰 다시 설계
 
 ## ✅ 완료
+- [x] Gather 스타일 오피스에 room transition, doorway pass-through, NPC 충돌 1차 구현
+- [x] Gather 스타일 오피스에 방/벽/문 기반 이동 규칙 1차 구현
+- [x] 메타버스형 플레이어 이동 및 좌석 착석 1차 구현
+- [x] 사장 지시를 PM Agent가 받아 팀에 분배하는 실제 워크플로우 구현
 - [x] Animal Office 6종 동물 기반 7개 에이전트 구조 및 역할 메타데이터 정리
 - [x] 카피바라 PM / 사용자 CEO 컨텍스트 반영
 - [x] 종+역할 기반 Ollama 시스템 프롬프트 적용
