@@ -34,6 +34,8 @@ export interface Agent {
   name: string;
   species: AnimalSpecies;
   role: string;
+  personality: string;
+  dialogueStyle: string;
   character: CharacterConfig;
   status: AgentStatus;
   currentTask: Task | null;

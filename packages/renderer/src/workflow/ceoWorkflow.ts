@@ -15,8 +15,10 @@ export type WorkflowAssignment = {
 export type WorkflowPhase = "briefing" | "execution" | "reporting" | "completed" | "error";
 
 export type WorkflowRun = {
+  id: string;
   command: string;
   startedAt: number;
+  finishedAt?: number;
   phase: WorkflowPhase;
   pmBriefing?: string;
   finalReport?: string;

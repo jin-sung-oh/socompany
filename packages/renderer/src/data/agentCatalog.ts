@@ -76,6 +76,8 @@ const baseAgents: Agent[] = [
     name: "카피바라 PM",
     species: "capybara",
     role: "PM Agent",
+    personality: "사장의 요청을 침착하게 해석하고 팀 전체 리듬을 정리하는 총괄형 관리자",
+    dialogueStyle: "느긋하지만 책임감 있고 정돈된 리더형 말투",
     status: "idle",
     currentTask: null,
     character: createCharacter(SPECIES_METADATA.capybara.emoji),
@@ -90,6 +92,8 @@ const baseAgents: Agent[] = [
     name: "여우 리서치",
     species: "fox",
     role: "Research Agent",
+    personality: "핵심 근거를 빠르게 모으고 허점을 잘 찾아내는 탐색형 분석가",
+    dialogueStyle: "재치 있지만 근거를 먼저 내세우는 날카로운 말투",
     status: "idle",
     currentTask: null,
     character: createCharacter(SPECIES_METADATA.fox.emoji),
@@ -104,6 +108,8 @@ const baseAgents: Agent[] = [
     name: "여우 트렌드",
     species: "fox",
     role: "Trend Agent",
+    personality: "시장 흐름과 변화를 민감하게 읽고 기회를 빠르게 포착하는 감각형 분석가",
+    dialogueStyle: "속도감 있고 트렌드 키워드를 잘 짚는 캐주얼한 말투",
     status: "idle",
     currentTask: null,
     character: createCharacter(SPECIES_METADATA.fox.emoji),
@@ -118,6 +124,8 @@ const baseAgents: Agent[] = [
     name: "호랑이 기획",
     species: "tiger",
     role: "Planning Agent",
+    personality: "불확실한 상황에서도 방향을 정하고 우선순위를 밀어붙이는 전략가",
+    dialogueStyle: "단호하고 결론 중심인 권위 있는 말투",
     status: "idle",
     currentTask: null,
     character: createCharacter(SPECIES_METADATA.tiger.emoji),
@@ -132,6 +140,8 @@ const baseAgents: Agent[] = [
     name: "돼지 문서",
     species: "pig",
     role: "Document Agent",
+    personality: "흩어진 내용을 체계적으로 묶고 빠진 항목을 집요하게 정리하는 기록가",
+    dialogueStyle: "차분하고 조목조목 정리하는 문서형 말투",
     status: "idle",
     currentTask: null,
     character: createCharacter(SPECIES_METADATA.pig.emoji),
@@ -146,6 +156,8 @@ const baseAgents: Agent[] = [
     name: "고양이 코딩",
     species: "cat",
     role: "Coding Agent",
+    personality: "불필요한 말을 줄이고 정확한 구현과 효율을 우선하는 장인형 개발자",
+    dialogueStyle: "건조하지만 정확하고 분석적인 엔지니어 말투",
     status: "idle",
     currentTask: null,
     character: createCharacter(SPECIES_METADATA.cat.emoji),
@@ -160,6 +172,8 @@ const baseAgents: Agent[] = [
     name: "개 테스트",
     species: "dog",
     role: "Test Agent",
+    personality: "작은 이상도 놓치지 않고 끝까지 확인하는 성실한 검증 담당자",
+    dialogueStyle: "밝지만 꼼꼼하고 확인 질문이 많은 QA 말투",
     status: "idle",
     currentTask: null,
     character: createCharacter(SPECIES_METADATA.dog.emoji),
@@ -201,7 +215,7 @@ export const createDefaultSettings = (): AppSettings => ({
   agents: createDefaultAgents(),
   widgetOpacity: 100,
   language: "ko",
-  characterType: "3d",
+  characterType: "video",
 });
 
 export const normalizeAgents = (storedAgents: unknown): Agent[] => {
@@ -234,12 +248,20 @@ export const normalizeAgents = (storedAgents: unknown): Agent[] => {
     usedIndexes.add(matchedIndex);
     const matched = candidates[matchedIndex] as Partial<Agent>;
 
-    return {
-      ...defaultAgent,
-      name: typeof matched.name === "string" && matched.name.trim() ? matched.name : defaultAgent.name,
-      role: typeof matched.role === "string" && matched.role.trim() ? matched.role : defaultAgent.role,
-      status: matched.status ?? defaultAgent.status,
-      currentTask: matched.currentTask ? { ...matched.currentTask } : null,
+      return {
+        ...defaultAgent,
+        name: typeof matched.name === "string" && matched.name.trim() ? matched.name : defaultAgent.name,
+        role: typeof matched.role === "string" && matched.role.trim() ? matched.role : defaultAgent.role,
+        personality:
+          typeof matched.personality === "string" && matched.personality.trim()
+            ? matched.personality
+            : defaultAgent.personality,
+        dialogueStyle:
+          typeof matched.dialogueStyle === "string" && matched.dialogueStyle.trim()
+            ? matched.dialogueStyle
+            : defaultAgent.dialogueStyle,
+        status: matched.status ?? defaultAgent.status,
+        currentTask: matched.currentTask ? { ...matched.currentTask } : null,
       persona: {
         description:
           typeof matched.persona?.description === "string" && matched.persona.description.trim()

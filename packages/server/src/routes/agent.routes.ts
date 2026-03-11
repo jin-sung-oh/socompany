@@ -13,7 +13,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       return { status: "error", message: "Task is required" };
     }
 
-    enqueueTask(task.trim());
+    enqueueTask(task.trim(), "rest");
     return { status: "success", message: "Task queued" };
   });
 
@@ -26,7 +26,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     }
 
     fastify.log.info(`Assigning task to agent ${id}: ${task}`);
-    enqueueTask(task.trim());
+    enqueueTask(task.trim(), "agent");
     return { status: "success", message: `Task queued for agent ${id}` };
   });
 }

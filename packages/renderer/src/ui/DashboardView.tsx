@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Send, Sparkles, Users, TerminalSquare, Settings2, Activity, AlertTriangle, CheckCircle2, Clock3, Loader2 } from "lucide-react";
+import { Send, Sparkles, Users, TerminalSquare, Settings2, Activity, AlertTriangle, CheckCircle2, Clock3, Loader2, FileText } from "lucide-react";
 import { SettingsPanel } from "./SettingsPanel";
 import { OfficeDashboard2D } from "./OfficeDashboard2D";
+import { OfficeDashboard3D } from "./OfficeDashboard3D";
+import { EmptyState } from "./components/EmptyState";
+import { LoadingSkeleton } from "./components/LoadingSkeleton";
+import { TypingIndicator } from "./components/TypingIndicator";
 import { useAgentStore } from "../stores/useAgentStore";
 import { useLogStore } from "../stores/useLogStore";
 import { useChatStore } from "../stores/useChatStore";
@@ -50,6 +54,90 @@ const taskStatusLabel: Record<"todo" | "doing" | "done", string> = {
   done: "완료",
 };
 
+const workflowHistoryLimit = 8;
+
+const workflowPhaseSteps = ["briefing", "execution", "reporting", "completed"] as const;
+
+type WorkflowPhaseStep = (typeof workflowPhaseSteps)[number];
+
+const workflowPhaseIndex: Record<WorkflowPhaseStep, number> = {
+  briefing: 0,
+  execution: 1,
+  reporting: 2,
+  completed: 3,
+};
+
+const workflowPhaseDescription: Record<WorkflowPhaseStep, string> = {
+  briefing: "PM이 사장 지시를 해석하고 팀 브리프를 만듭니다.",
+  execution: "역할별 에이전트가 순차적으로 중간 결과를 제출합니다.",
+  reporting: "PM이 팀 결과를 취합해 최종 보고를 정리합니다.",
+  completed: "사장이 확인할 최종 산출물이 정리된 상태입니다.",
+};
+
+const formatWorkflowDateTime = (timestamp: number) =>
+  new Date(timestamp).toLocaleString("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const getWorkflowPhaseProgressIndex = (run: WorkflowRun) => {
+  switch (run.phase) {
+    case "execution":
+      return 1;
+    case "reporting":
+      return 2;
+    case "completed":
+      return 3;
+    case "error":
+      if (run.finalReport) {
+        return 2;
+      }
+      if (run.assignments.some((assignment) => assignment.status !== "queued")) {
+        return 1;
+      }
+      return 0;
+    case "briefing":
+    default:
+      return 0;
+  }
+};
+
+const getWorkflowStepTone = (run: WorkflowRun, step: WorkflowPhaseStep) => {
+  const stepIndex = workflowPhaseIndex[step];
+  const progressIndex = getWorkflowPhaseProgressIndex(run);
+
+  if (run.phase === "completed") {
+    return "done";
+  }
+
+  if (stepIndex < progressIndex) {
+    return "done";
+  }
+
+  if (stepIndex === progressIndex) {
+    return run.phase === "error" ? "error" : "active";
+  }
+
+  return "upcoming";
+};
+
+const getWorkflowRunTone = (run: WorkflowRun) => {
+  if (run.phase === "error") {
+    return "error";
+  }
+
+  if (run.phase === "completed") {
+    return "done";
+  }
+
+  return "active";
+};
+
+const getWorkflowRunPreview = (run: WorkflowRun) =>
+  summarizeText(run.finalReport ?? run.pmBriefing ?? run.assignments.find((assignment) => assignment.response)?.response ?? "브리프 생성 전입니다.", 140);
+
 export const DashboardView = () => {
   const agents = useAgentStore((state) => state.agents);
   const setAgents = useAgentStore((state) => state.setAgents);
@@ -59,18 +147,16 @@ export const DashboardView = () => {
   const addLog = useLogStore((state) => state.addLog);
   const addMessage = useChatStore((state) => state.addMessage);
   const messagesByAgent = useChatStore((state) => state.messagesByAgent);
-  const { settings, load: loadSettings } = useSettingsStore();
+  const settings = useSettingsStore((state) => state.settings);
   const { t } = useTranslation();
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [commandInput, setCommandInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [workflowRun, setWorkflowRun] = useState<WorkflowRun | null>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    void loadSettings();
-  }, [loadSettings]);
+  const [workflowHistory, setWorkflowHistory] = useState<WorkflowRun[]>([]);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const chatStreamRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setAgents(normalizeAgents(settings.agents));
@@ -82,7 +168,33 @@ export const DashboardView = () => {
   const messages = messagesByAgent[activeAgentId] ?? [];
   const latestLog = logs[0] ?? "사장님의 첫 지시를 기다리는 중입니다.";
   const visibleLogs = useMemo(() => logs.slice(0, 8), [logs]);
+  const show3DOffice = settings.characterType === "3d";
+  const officeSelectionId = selectedAgentId || null;
   const workflowSummarySource = workflowRun?.finalReport ?? workflowRun?.pmBriefing ?? "";
+  const selectedWorkflowRun = useMemo(() => {
+    if (selectedWorkflowId && workflowRun?.id === selectedWorkflowId) {
+      return workflowRun;
+    }
+
+    return workflowHistory.find((run) => run.id === selectedWorkflowId) ?? workflowRun ?? workflowHistory[0] ?? null;
+  }, [selectedWorkflowId, workflowHistory, workflowRun]);
+  const selectedWorkflowAssignmentStats = useMemo(() => {
+    if (!selectedWorkflowRun) {
+      return {
+        total: 0,
+        done: 0,
+        running: 0,
+        error: 0,
+      };
+    }
+
+    return {
+      total: selectedWorkflowRun.assignments.length,
+      done: selectedWorkflowRun.assignments.filter((assignment) => assignment.status === "done").length,
+      running: selectedWorkflowRun.assignments.filter((assignment) => assignment.status === "running").length,
+      error: selectedWorkflowRun.assignments.filter((assignment) => assignment.status === "error").length,
+    };
+  }, [selectedWorkflowRun]);
   const statusSummary = useMemo(
     () => ({
       total: agents.length,
@@ -92,6 +204,24 @@ export const DashboardView = () => {
     }),
     [agents],
   );
+
+  useEffect(() => {
+    if (!workflowRun) {
+      return;
+    }
+
+    setWorkflowHistory((prev) => [workflowRun, ...prev.filter((run) => run.id !== workflowRun.id)].slice(0, workflowHistoryLimit));
+  }, [workflowRun]);
+
+  useEffect(() => {
+    if (!selectedWorkflowId && workflowHistory.length > 0) {
+      setSelectedWorkflowId(workflowHistory[0].id);
+    }
+  }, [selectedWorkflowId, workflowHistory]);
+
+  const patchWorkflowRun = (updater: (prev: WorkflowRun) => WorkflowRun) => {
+    setWorkflowRun((prev) => (prev ? updater(prev) : prev));
+  };
 
   const resetWorkflowAgentState = () => {
     agents.forEach((agent) => {
@@ -122,24 +252,18 @@ export const DashboardView = () => {
   };
 
   const setWorkflowAssignmentState = (agentId: string, status: WorkflowAssignment["status"], response?: string) => {
-    setWorkflowRun((prev) => {
-      if (!prev) {
-        return prev;
-      }
-
-      return {
-        ...prev,
-        assignments: prev.assignments.map((assignment) =>
-          assignment.agentId === agentId
-            ? {
-                ...assignment,
-                status,
-                response: response ?? assignment.response,
-              }
-            : assignment,
-        ),
-      };
-    });
+    patchWorkflowRun((prev) => ({
+      ...prev,
+      assignments: prev.assignments.map((assignment) =>
+        assignment.agentId === agentId
+          ? {
+              ...assignment,
+              status,
+              response: response ?? assignment.response,
+            }
+          : assignment,
+      ),
+    }));
   };
 
   useEffect(() => {
@@ -154,7 +278,11 @@ export const DashboardView = () => {
   }, [agents, pmAgent, selectedAgentId]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!chatStreamRef.current) {
+      return;
+    }
+
+    chatStreamRef.current.scrollTop = chatStreamRef.current.scrollHeight;
   }, [messages, activeAgentId]);
 
   const handleSend = async () => {
@@ -164,6 +292,7 @@ export const DashboardView = () => {
 
     const userMsg = commandInput.trim();
     const nextWorkflow: WorkflowRun = {
+      id: `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       command: userMsg,
       startedAt: Date.now(),
       phase: "briefing",
@@ -173,6 +302,7 @@ export const DashboardView = () => {
     setError(null);
     setIsLoading(true);
     setSelectedAgentId(pmAgent.id);
+    setSelectedWorkflowId(nextWorkflow.id);
     setCommandInput("");
     setWorkflowRun(nextWorkflow);
     resetWorkflowAgentState();
@@ -188,7 +318,7 @@ export const DashboardView = () => {
       setError(disconnected);
       addMessage(pmAgent.id, "assistant", disconnected);
       updateAgentStatus(pmAgent.id, "error");
-      setWorkflowRun((prev) => (prev ? { ...prev, phase: "error", finalReport: disconnected } : prev));
+      patchWorkflowRun((prev) => ({ ...prev, phase: "error", finalReport: disconnected, finishedAt: Date.now() }));
       setIsLoading(false);
       return;
     }
@@ -205,7 +335,7 @@ export const DashboardView = () => {
         addMessage(pmAgent.id, "assistant", errorMsg);
         updateAgentStatus(pmAgent.id, "error");
         setAgentTask(pmAgent.id, "사장 지시 분석 및 팀 분배", "todo");
-        setWorkflowRun((prev) => (prev ? { ...prev, phase: "error", finalReport: errorMsg } : prev));
+        patchWorkflowRun((prev) => ({ ...prev, phase: "error", finalReport: errorMsg, finishedAt: Date.now() }));
         return;
       }
 
@@ -213,7 +343,7 @@ export const DashboardView = () => {
       updateAgentStatus(pmAgent.id, "completed");
       setAgentTask(pmAgent.id, "사장 지시 분석 및 팀 분배", "done");
       addLog(formatWorkflowLogLine(`${pmAgent.name}: 팀 분배 브리프 작성 완료`));
-      setWorkflowRun((prev) => (prev ? { ...prev, phase: "execution", pmBriefing: pmBrief.response } : prev));
+      patchWorkflowRun((prev) => ({ ...prev, phase: "execution", pmBriefing: pmBrief.response }));
 
       const completedAssignments: WorkflowAssignment[] = [];
 
@@ -249,7 +379,7 @@ export const DashboardView = () => {
         setWorkflowAssignmentState(assignment.agentId, "error", responseText);
       }
 
-      setWorkflowRun((prev) => (prev ? { ...prev, phase: "reporting", assignments: completedAssignments } : prev));
+      patchWorkflowRun((prev) => ({ ...prev, phase: "reporting", assignments: completedAssignments }));
       updateAgentStatus(pmAgent.id, "thinking");
       setAgentTask(pmAgent.id, "팀 결과 취합 및 사장 보고", "doing");
       moveAgentToWorkspace(pmAgent.id, pmAgent.role);
@@ -267,28 +397,25 @@ export const DashboardView = () => {
         updateAgentStatus(pmAgent.id, "completed");
         setAgentTask(pmAgent.id, "팀 결과 취합 및 사장 보고", "done");
         addLog(formatWorkflowLogLine(`${pmAgent.name}: 최종 보고 완료`));
-        setWorkflowRun((prev) =>
-          prev
-            ? {
-                ...prev,
-                phase: "completed",
-                finalReport: finalReport.response,
-                assignments: completedAssignments,
-              }
-            : prev,
-        );
+        patchWorkflowRun((prev) => ({
+          ...prev,
+          phase: "completed",
+          finalReport: finalReport.response,
+          assignments: completedAssignments,
+          finishedAt: Date.now(),
+        }));
       } else {
         setError(finalResponseText);
         updateAgentStatus(pmAgent.id, "error");
         setAgentTask(pmAgent.id, "팀 결과 취합 및 사장 보고", "todo");
-        setWorkflowRun((prev) => (prev ? { ...prev, phase: "error", finalReport: finalResponseText } : prev));
+        patchWorkflowRun((prev) => ({ ...prev, phase: "error", finalReport: finalResponseText, finishedAt: Date.now() }));
       }
     } catch {
       const errorMsg = t("widget.chat_error");
       setError(errorMsg);
       addMessage(pmAgent.id, "assistant", errorMsg);
       updateAgentStatus(pmAgent.id, "error");
-      setWorkflowRun((prev) => (prev ? { ...prev, phase: "error", finalReport: errorMsg } : prev));
+      patchWorkflowRun((prev) => ({ ...prev, phase: "error", finalReport: errorMsg, finishedAt: Date.now() }));
     } finally {
       setIsLoading(false);
     }
@@ -316,12 +443,20 @@ export const DashboardView = () => {
           <div className="ceo-panel-head">
             <div>
               <p className="ceo-panel-kicker">Office</p>
-              <h2>Gather Town 스타일 오피스</h2>
+              <h2>{show3DOffice ? "3D 커맨드 덱" : "Gather Town 스타일 오피스"}</h2>
             </div>
             <Users size={18} />
           </div>
-          <p className="ceo-panel-note">미니미들이 사무실을 돌아다니다가, 지시가 들어오면 자기 자리로 이동해 일합니다. 사원을 클릭하면 해당 기록을 바로 볼 수 있습니다.</p>
-          <OfficeDashboard2D embedded selectedAgentId={selectedAgent?.id ?? null} onSelectAgent={setSelectedAgentId} />
+          <p className="ceo-panel-note">
+            {show3DOffice
+              ? "2D 오피스와 같은 좌석/상태 데이터를 3D 씬으로 보여줍니다. 사원을 클릭하면 카메라가 해당 자리로 포커스되고, 현재 작업 정보를 바로 볼 수 있습니다."
+              : "미니미들이 사무실을 돌아다니다가, 지시가 들어오면 자기 자리로 이동해 일합니다. 사원을 클릭하면 해당 기록을 바로 볼 수 있습니다."}
+          </p>
+          {show3DOffice ? (
+            <OfficeDashboard3D embedded selectedAgentId={officeSelectionId} onSelectAgent={(id) => setSelectedAgentId(id ?? "")} />
+          ) : (
+            <OfficeDashboard2D embedded selectedAgentId={officeSelectionId} onSelectAgent={(id) => setSelectedAgentId(id ?? "")} />
+          )}
         </div>
 
         <div className="ceo-stage-side">
@@ -441,9 +576,179 @@ export const DashboardView = () => {
                   </div>
                 ))
               ) : (
-                <div className="ceo-empty-state">PM이 아직 팀 분배를 시작하지 않았습니다.</div>
+                <EmptyState description="PM이 아직 팀 분배를 시작하지 않았습니다." className="ceo-empty-state" compact />
               )}
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="ceo-results-grid">
+        <div className="ceo-panel ceo-artifact-panel">
+          <div className="ceo-panel-head">
+            <div>
+              <p className="ceo-panel-kicker">Outputs</p>
+              <h2>산출물 패널</h2>
+            </div>
+            <FileText size={18} />
+          </div>
+
+          {selectedWorkflowRun ? (
+            <>
+              <div className="ceo-artifact-topbar">
+                <div>
+                  <p className="ceo-panel-kicker">Selected Command</p>
+                  <h3>{summarizeText(selectedWorkflowRun.command, 150)}</h3>
+                </div>
+                <span className={`ceo-run-badge ${getWorkflowRunTone(selectedWorkflowRun)}`}>{getWorkflowPhaseLabel(selectedWorkflowRun.phase)}</span>
+              </div>
+
+              <div className="ceo-artifact-meta-grid">
+                <div className="ceo-artifact-meta-card">
+                  <span>지시 시각</span>
+                  <strong>{formatWorkflowDateTime(selectedWorkflowRun.startedAt)}</strong>
+                </div>
+                <div className="ceo-artifact-meta-card">
+                  <span>완료 현황</span>
+                  <strong>
+                    {selectedWorkflowAssignmentStats.done}/{selectedWorkflowAssignmentStats.total || 0}
+                  </strong>
+                </div>
+                <div className="ceo-artifact-meta-card">
+                  <span>이슈</span>
+                  <strong>{selectedWorkflowAssignmentStats.error > 0 ? `${selectedWorkflowAssignmentStats.error}건` : "없음"}</strong>
+                </div>
+                <div className="ceo-artifact-meta-card">
+                  <span>마지막 상태</span>
+                  <strong>{selectedWorkflowRun.finishedAt ? formatWorkflowDateTime(selectedWorkflowRun.finishedAt) : "진행 중"}</strong>
+                </div>
+              </div>
+
+              <div className="ceo-phase-track" aria-label="워크플로우 진행 흐름">
+                {workflowPhaseSteps.map((step) => (
+                  <div key={step} className={`ceo-phase-step ${getWorkflowStepTone(selectedWorkflowRun, step)}`}>
+                    <span className="ceo-phase-dot" />
+                    <strong>{getWorkflowPhaseLabel(step)}</strong>
+                    <p>{workflowPhaseDescription[step]}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="ceo-artifact-scroll">
+                <div className="ceo-artifact-card">
+                  <div className="ceo-artifact-card-head">
+                    <div>
+                      <p className="ceo-panel-kicker">PM Brief</p>
+                      <h3>PM 초기 브리프</h3>
+                    </div>
+                  </div>
+                  <div className="ceo-artifact-body">
+                    {selectedWorkflowRun.pmBriefing ? (
+                      selectedWorkflowRun.pmBriefing
+                    ) : selectedWorkflowRun.phase === "briefing" ? (
+                      <LoadingSkeleton compact lines={3} />
+                    ) : (
+                      "아직 PM 브리프가 생성되지 않았습니다."
+                    )}
+                  </div>
+                </div>
+
+                <div className="ceo-artifact-card">
+                  <div className="ceo-artifact-card-head">
+                    <div>
+                      <p className="ceo-panel-kicker">Final Report</p>
+                      <h3>사장 보고서</h3>
+                    </div>
+                  </div>
+                  <div className="ceo-artifact-body">
+                    {selectedWorkflowRun.finalReport ? (
+                      selectedWorkflowRun.finalReport
+                    ) : selectedWorkflowRun.phase === "error" ? (
+                      "최종 보고 이전 단계에서 오류가 발생했습니다."
+                    ) : (
+                      <LoadingSkeleton compact lines={4} />
+                    )}
+                  </div>
+                </div>
+
+                <div className="ceo-artifact-card">
+                  <div className="ceo-artifact-card-head">
+                    <div>
+                      <p className="ceo-panel-kicker">Team Outputs</p>
+                      <h3>역할별 중간 산출물</h3>
+                    </div>
+                  </div>
+                  <div className="ceo-artifact-team-grid">
+                    {selectedWorkflowRun.assignments.map((assignment) => (
+                      <div key={`${selectedWorkflowRun.id}-${assignment.agentId}`} className="ceo-artifact-team-card">
+                        <div className="ceo-workflow-item-top">
+                          <div>
+                            <strong>{assignment.agentName}</strong>
+                            <div className="ceo-team-meta">{assignment.role}</div>
+                          </div>
+                          <span className={`ceo-task-state ${assignment.status}`}>{getWorkflowStatusLabel(assignment.status)}</span>
+                        </div>
+                        <p className="ceo-artifact-task-title">{assignment.title}</p>
+                        <div className="ceo-artifact-body">
+                          {assignment.response ? (
+                            assignment.response
+                          ) : assignment.status === "running" ? (
+                            <LoadingSkeleton compact lines={3} />
+                          ) : (
+                            "아직 보고가 없습니다."
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <EmptyState
+              title="산출물 대기"
+              description="최근 지시가 아직 없습니다. 워크플로우를 시작하면 PM 브리프와 역할별 산출물이 여기에 정리됩니다."
+              className="ceo-empty-state"
+            />
+          )}
+        </div>
+
+        <div className="ceo-panel ceo-history-panel">
+          <div className="ceo-panel-head">
+            <div>
+              <p className="ceo-panel-kicker">History</p>
+              <h2>지시 히스토리</h2>
+            </div>
+            <Clock3 size={18} />
+          </div>
+          <p className="ceo-panel-note">최근 지시를 선택하면 해당 실행의 진행 흐름과 산출물을 다시 확인할 수 있습니다.</p>
+
+          <div className="ceo-history-list">
+            {workflowHistory.length === 0 ? (
+              <EmptyState description="아직 저장된 지시가 없습니다." className="ceo-empty-state" compact />
+            ) : (
+              workflowHistory.map((run) => (
+                <button
+                  key={run.id}
+                  type="button"
+                  className={`ceo-history-item ${selectedWorkflowRun?.id === run.id ? "active" : ""}`}
+                  onClick={() => setSelectedWorkflowId(run.id)}
+                >
+                  <div className="ceo-history-item-top">
+                    <span className={`ceo-run-badge ${getWorkflowRunTone(run)}`}>{getWorkflowPhaseLabel(run.phase)}</span>
+                    <time>{formatWorkflowDateTime(run.startedAt)}</time>
+                  </div>
+                  <strong>{summarizeText(run.command, 92)}</strong>
+                  <div className="ceo-history-item-meta">
+                    <span>
+                      완료 {run.assignments.filter((assignment) => assignment.status === "done").length}/{run.assignments.length}
+                    </span>
+                    <span>오류 {run.assignments.filter((assignment) => assignment.status === "error").length}</span>
+                  </div>
+                  <p>{getWorkflowRunPreview(run)}</p>
+                </button>
+              ))
+            )}
           </div>
         </div>
       </section>
@@ -492,9 +797,12 @@ export const DashboardView = () => {
             </div>
             <TerminalSquare size={18} />
           </div>
-          <div className="ceo-chat-stream">
+          <div className="ceo-chat-stream" ref={chatStreamRef}>
             {messages.length === 0 ? (
-              <div className="ceo-empty-state">선택한 에이전트와 아직 작업 기록이 없습니다. 워크플로우를 시작하거나 다른 팀원을 선택하세요.</div>
+              <EmptyState
+                description="선택한 에이전트와 아직 작업 기록이 없습니다. 워크플로우를 시작하거나 다른 팀원을 선택하세요."
+                className="ceo-empty-state"
+              />
             ) : (
               messages.map((msg) => (
                 <div key={msg.id} className={`ceo-chat-bubble ${msg.role}`}>
@@ -505,14 +813,9 @@ export const DashboardView = () => {
             )}
             {isLoading && (
               <div className="ceo-chat-bubble assistant">
-                <div className="flex items-center gap-1">
-                  <span className="animate-pulse">●</span>
-                  <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
-                  <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
-                </div>
+                <TypingIndicator compact tone="accent" label="PM 워크플로우 진행 중" />
               </div>
             )}
-            <div ref={chatEndRef} />
           </div>
         </div>
 
@@ -526,7 +829,7 @@ export const DashboardView = () => {
           </div>
           <div className="ceo-log-list">
             {visibleLogs.length === 0 ? (
-              <div className="ceo-empty-state">아직 로그가 없습니다.</div>
+              <EmptyState description="아직 로그가 없습니다." className="ceo-empty-state" compact />
             ) : (
               visibleLogs.map((line, index) => (
                 <div key={`${line}-${index}`} className="ceo-log-item">

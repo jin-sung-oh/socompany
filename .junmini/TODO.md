@@ -1,16 +1,30 @@
 # TODO
 ## 🔴 진행중
-- [ ] 결과물 중심의 단일 대시보드 구조 확장 (산출물 패널, 진행 흐름, 지시 히스토리)
-- [ ] 플레이어/NPC 거리 기반 상호작용 시스템 구현
-- [ ] doorway pass-through 애니메이션 및 NPC pathfinding 고도화
 
 ## 🟡 예정
-- [ ] 재사용 가능한 컴포넌트 라이브러리 구축 (EmptyState, LoadingSkeleton, TypingIndicator)
-- [ ] 다크 모드 지원
-- [ ] 2D 오피스 자산을 실제 픽셀 스프라이트로 교체
-- [ ] 3D 오피스 뷰를 새 기준에 맞춰 다시 설계
+- [ ] 3D 오피스에 플레이어 이동/근접 채널까지 넣을지 결정하고, 현재 직통 대화 흐름과 통합
+- [ ] FastAPI `rag` agent와 optional webhook push를 현재 KAFI 워크플로우에 어떻게 편입할지 결정
 
 ## ✅ 완료
+- [x] FastAPI 스펙(`/api/v1/tasks`, `/api/v1/tasks/{id}` polling) 기준으로 Fastify 브리지 연동
+- [x] 3D 오피스에 선택 기반 직통 대화 패널과 응답 흐름 연결
+- [x] 3D 오피스 뷰를 새 기준에 맞춰 다시 설계
+- [x] 2D 오피스 자산을 실제 픽셀 스프라이트로 교체
+- [x] 다크 모드 지원
+- [x] 재사용 가능한 컴포넌트 라이브러리 구축 (EmptyState, LoadingSkeleton, TypingIndicator)
+- [x] 오피스 맵의 나머지 가구/벽체 현실감 고도화
+- [x] doorway pass-through 애니메이션 및 NPC pathfinding 고도화
+- [x] 플레이어/NPC 거리 기반 상호작용을 실제 대화 패널/오디오로 확장
+- [x] Tailwind CSS를 네트워크 가능한 환경에서 실제 도입
+- [x] NPC 이동도 Gather식 4방향/그리드 감각에 맞게 추가 정제
+- [x] 결과물 중심의 단일 대시보드 구조 확장 (산출물 패널, 진행 흐름, 지시 히스토리)
+- [x] Gather형 grid tile map, collision matrix, Y-sorting, camera follow 기반 오피스 구조 재정비
+- [x] Active Animals sidebar, Mini-map, 하단 Conversation 패널을 포함한 spatial HUD 1차 구현
+- [x] LLM spatial prompt에 WorldState/Current_Location/User_History/JSON action 형식 주입
+- [x] Gather식 4방향 그리드 스냅 이동 및 player-centered camera follow 구현
+- [x] 상호작용 타일 레이어와 거리 기반 chat opacity/volume foundation 구현
+- [x] 플레이어 근접 시 에이전트 자동 반응 링/말풍선/HUD 1차 구현
+- [x] 책상/의자 오피스 가구 사실화 1차 구현
 - [x] Gather 스타일 오피스에 room transition, doorway pass-through, NPC 충돌 1차 구현
 - [x] Gather 스타일 오피스에 방/벽/문 기반 이동 규칙 1차 구현
 - [x] 메타버스형 플레이어 이동 및 좌석 착석 1차 구현

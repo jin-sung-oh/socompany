@@ -4,6 +4,7 @@ import { DashboardView } from "./DashboardView";
 import { WidgetView } from "./WidgetView";
 import { useAgentStore, AgentSummary } from "../stores/useAgentStore";
 import { useLogStore } from "../stores/useLogStore";
+import { useSettingsStore } from "../stores/useSettingsStore";
 
 const getViewMode = () => {
   const hash = window.location.hash.replace("#", "");
@@ -19,6 +20,42 @@ export const App = () => {
   const mergeAgentUpdates = useAgentStore((state) => state.mergeAgentUpdates);
   const updateAgentStatus = useAgentStore((state) => state.updateAgentStatus);
   const addLog = useLogStore((state) => state.addLog);
+  const loadSettings = useSettingsStore((state) => state.load);
+  const theme = useSettingsStore((state) => state.settings.theme);
+
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const root = document.documentElement;
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const resolvedTheme = theme === "system" ? (mediaQuery.matches ? "dark" : "light") : theme;
+      root.dataset.theme = resolvedTheme;
+      root.style.colorScheme = resolvedTheme;
+    };
+
+    applyTheme();
+
+    if (theme !== "system") {
+      return;
+    }
+
+    const handleChange = () => applyTheme();
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+
+    mediaQuery.addListener(handleChange);
+    return () => mediaQuery.removeListener(handleChange);
+  }, [theme]);
 
   useEffect(() => {
     let socket: Socket | null = null;

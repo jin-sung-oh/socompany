@@ -3,12 +3,11 @@ import type { Agent, AgentStatus } from "@kafi/shared";
 import { createDefaultAgents } from "../data/agentCatalog";
 import type { OfficePoint } from "../data/officeLayout";
 import {
-  clampOfficePosition,
   distanceBetween,
   getDirectionFromVector,
   getNextOfficeWaypoint,
+  getZoneForPosition,
   getRandomOfficePosition,
-  moveWithinOffice,
 } from "../data/officeNavigation";
 
 export type AgentBehavior = "wandering" | "working" | "resting" | "talking";
@@ -18,6 +17,7 @@ export interface AgentState extends Agent {
   targetPosition: OfficePoint | null;
   direction: "left" | "right" | "up" | "down";
   behavior: AgentBehavior;
+  lastMovedAt: number;
 }
 
 export type AgentSummary = Pick<Agent, "id" | "name" | "species" | "role" | "status">;
@@ -36,8 +36,8 @@ interface AgentStore {
 }
 
 const fallbackPosition = (index: number) => ({
-  x: 18 + (index % 3) * 28,
-  y: 24 + Math.floor(index / 3) * 28,
+  x: 3 + (index % 3) * 4,
+  y: 4 + Math.floor(index / 3) * 3,
 });
 
 const statusToBehavior = (status: AgentStatus): AgentBehavior => {
@@ -59,6 +59,7 @@ const toAgentState = (agent: Agent | AgentState, index: number, previous?: Agent
   position: "position" in agent ? agent.position : previous?.position ?? fallbackPosition(index),
   targetPosition: "targetPosition" in agent ? agent.targetPosition : previous?.targetPosition ?? null,
   direction: "direction" in agent ? agent.direction : previous?.direction ?? "right",
+  lastMovedAt: "lastMovedAt" in agent ? agent.lastMovedAt : previous?.lastMovedAt ?? 0,
   behavior:
     "behavior" in agent
       ? agent.behavior
@@ -116,69 +117,116 @@ export const useAgentStore = create<AgentStore>((set) => ({
   setOfficePlayerPosition: (position) => set(() => ({ officePlayerPosition: position })),
   moveAgents: () =>
     set((state) => {
+      const now = Date.now();
       const nextAgents: AgentState[] = [];
       const stationaryObstacles = state.officePlayerPosition ? [state.officePlayerPosition] : [];
 
       state.agents.forEach((agent, index) => {
-        if (agent.behavior === "working" && !agent.targetPosition) {
+        if ((agent.behavior === "working" || agent.behavior === "talking") && !agent.targetPosition) {
           nextAgents.push(agent);
           return;
         }
 
         if (!agent.targetPosition) {
+          if (now - agent.lastMovedAt < 900 || Math.random() < 0.965) {
+            nextAgents.push(agent);
+            return;
+          }
+
           const blockedPositions = [
             ...stationaryObstacles,
             ...nextAgents.map((item) => item.position),
             ...state.agents.slice(index + 1).map((item) => item.position),
           ];
+          const currentZone = getZoneForPosition(agent.position);
+          const wanderBaseOptions = {
+            origin: agent.position,
+            blockedPositions,
+            minDistance: 1,
+            avoidObjectKinds: ["door", "chair"] as const,
+          };
+          const preferredWanderTarget = getRandomOfficePosition({
+            ...wanderBaseOptions,
+            maxDistance: currentZone?.variant === "corridor" ? 5 : 4,
+            allowedZoneIds: currentZone ? [currentZone.id, "zone-corridor"] : undefined,
+            preferredZoneIds: currentZone ? [currentZone.id] : undefined,
+          });
+          const fallbackWanderTarget =
+            currentZone?.id && currentZone.id !== "zone-corridor"
+              ? getRandomOfficePosition({
+                  ...wanderBaseOptions,
+                  maxDistance: 6,
+                  allowedZoneIds: ["zone-corridor"],
+                  preferredZoneIds: ["zone-corridor"],
+                })
+              : null;
+          const nextTarget = preferredWanderTarget ?? fallbackWanderTarget;
+
+          if (!nextTarget) {
+            nextAgents.push({
+              ...agent,
+              behavior: "resting",
+              lastMovedAt: now,
+            });
+            return;
+          }
 
           nextAgents.push({
             ...agent,
-            targetPosition: getRandomOfficePosition({
-              blockedPositions,
-              collisionRadius: 4.6,
-            }),
+            targetPosition: nextTarget,
+            behavior: "wandering",
+            lastMovedAt: now,
           });
           return;
         }
 
-        if (distanceBetween(agent.position, agent.targetPosition) < 1) {
+        if (agent.position.x === agent.targetPosition.x && agent.position.y === agent.targetPosition.y) {
           nextAgents.push({
             ...agent,
             targetPosition: null,
-            behavior: agent.status === "working" ? "working" : Math.random() > 0.75 ? "working" : "wandering",
+            behavior:
+              agent.status === "working"
+                ? "working"
+                : agent.status === "completed" || Math.random() > 0.45
+                  ? "resting"
+                  : "wandering",
+            lastMovedAt: now,
           });
           return;
         }
 
-        const waypoint = getNextOfficeWaypoint(agent.position, agent.targetPosition);
-        const dx = waypoint.x - agent.position.x;
-        const dy = waypoint.y - agent.position.y;
-        const waypointDistance = Math.sqrt(dx * dx + dy * dy);
-
-        if (waypointDistance < 0.35) {
-          nextAgents.push({
-            ...agent,
-            position: clampOfficePosition(waypoint.x, waypoint.y),
-          });
+        if (now - agent.lastMovedAt < 220) {
+          nextAgents.push(agent);
           return;
         }
 
-        const speed = 0.38;
-        const vx = (dx / waypointDistance) * speed;
-        const vy = (dy / waypointDistance) * speed;
         const blockedPositions = [
           ...stationaryObstacles,
           ...nextAgents.map((item) => item.position),
           ...state.agents.slice(index + 1).map((item) => item.position),
         ];
-        const nextPosition = moveWithinOffice(agent.position, { x: vx, y: vy }, { blockedPositions, collisionRadius: 4.6 });
-        const didMove = distanceBetween(agent.position, nextPosition) > 0.01;
+
+        const nextPosition = getNextOfficeWaypoint(agent.position, agent.targetPosition, {
+          blockedPositions,
+          goal: agent.targetPosition,
+        });
+        const didMove = distanceBetween(agent.position, nextPosition) >= 1;
+
+        if (!didMove && agent.status !== "working" && now - agent.lastMovedAt >= 660) {
+          nextAgents.push({
+            ...agent,
+            targetPosition: null,
+            behavior: "resting",
+            lastMovedAt: now,
+          });
+          return;
+        }
 
         nextAgents.push({
           ...agent,
           position: nextPosition,
-          direction: didMove ? getDirectionFromVector(vx, vy, agent.direction) : agent.direction,
+          direction: didMove ? getDirectionFromVector(nextPosition.x - agent.position.x, nextPosition.y - agent.position.y, agent.direction) : agent.direction,
+          lastMovedAt: didMove ? now : agent.lastMovedAt,
         });
       });
 

@@ -1,13 +1,13 @@
 📖 먼저 아래 파일들만 읽어주세요 (전체 프로젝트 재분석 금지):
 - /Users/seongohjin/Desktop/repository/my/secretary/.junmini/PROJECT_ANALYSIS.md
 - ⭐ TODO: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/TODO.md
-- 최근 작업 기록: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/history/2026-03-06.md
+- 최근 작업 기록: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/history/2026-03-10.md
 - 결정 로그: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/DECISIONS.md
 - 추가 참고: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/PROJECT.md
 - 추가 참고: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/RULES.default.md
-- 추가 참고: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/history/2026-03-04.md
-- 추가 참고: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/history/2026-03-05.md
-- 추가 참고: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/history/2026-03-06.md
+- 추가 참고: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/history/2026-03-07.md
+- 추가 참고: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/history/2026-03-08.md
+- 추가 참고: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/history/2026-03-10.md
 - 추가 참고: /Users/seongohjin/Desktop/repository/my/secretary/.junmini/model.md
 
 ✅ 원칙: .junmini에 정리된 내용을 기준으로 작업하세요.
@@ -17,12 +17,12 @@
 (기존 프로젝트 규칙의 저장 위치 무시)
 
 ⚠️ 필수: 작업 종료 전 반드시 수행할 것
-【1】 /Users/seongohjin/Desktop/repository/my/secretary/.junmini/history/2026-03-07.md에 오늘 작업 기록 저장 (필수)
+【1】 /Users/seongohjin/Desktop/repository/my/secretary/.junmini/history/2026-03-11.md에 오늘 작업 기록 저장 (필수)
 【2】 /Users/seongohjin/Desktop/repository/my/secretary/.junmini/TODO.md에 미완료/진행중 작업 업데이트 (필수)
 【3】 중요한 결정이 있었다면 /Users/seongohjin/Desktop/repository/my/secretary/.junmini/DECISIONS.md에 추가 (권장)
 
 히스토리 형식:
-# 2026-03-07 작업 기록
+# 2026-03-11 작업 기록
 ## 완료된 작업
 ## 변경된 파일  
 ## 다음 할 일

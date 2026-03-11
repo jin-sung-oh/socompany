@@ -1,20 +1,26 @@
-import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAgentStore, type AgentState } from "../stores/useAgentStore";
-import { getSpeciesMeta } from "../data/agentCatalog";
-import { OFFICE_DOORS, OFFICE_SEATS, OFFICE_WALLS, OFFICE_ZONES, PLAYER_SPAWN, getSeatByRole, type OfficeSeat } from "../data/officeLayout";
+import {
+  OFFICE_GRID_HEIGHT,
+  OFFICE_GRID_WIDTH,
+  PLAYER_SPAWN,
+  TILE_SIZE,
+  type OfficePoint,
+} from "../data/officeLayout";
 import {
   canOccupyOfficePosition,
   clampOfficePosition,
   distanceBetween,
-  findNearestDoor,
-  getDirectionFromVector,
-  getDoorInteractionLabel,
-  getDoorTransitionTarget,
+  getDoorLaneForPosition,
+  getLocationLabel,
   getZoneForPosition,
   moveWithinOffice,
 } from "../data/officeNavigation";
-import { MapPin, Zap } from "lucide-react";
+import { useAgentStore } from "../stores/useAgentStore";
+import { useChatStore } from "../stores/useChatStore";
+import { OfficeConversationPanel } from "./office2d/OfficeConversationPanel";
+import { OfficeHUD } from "./office2d/OfficeHUD";
+import { OfficeMap } from "./office2d/OfficeMap";
+import { buildSpatialConversationPrompt, parseSpatialConversationResponse } from "./office2d/spatialPrompt";
 
 type OfficeDashboard2DProps = {
   embedded?: boolean;
@@ -23,34 +29,13 @@ type OfficeDashboard2DProps = {
 };
 
 type PlayerState = {
-  position: { x: number; y: number };
+  position: OfficePoint;
   direction: "left" | "right" | "up" | "down";
-  sittingSeatId: string | null;
 };
 
-const interactionRange = 8;
-const seatSnapRange = 7;
-const movementSpeed = 1.25;
-
-const movementKeys = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "a", "s", "d", "W", "A", "S", "D"]);
-
-const speciesPalette: Record<AgentState["species"], { primary: string; accent: string }> = {
-  capybara: { primary: "#9d7a5c", accent: "#5c4333" },
-  fox: { primary: "#ee8b54", accent: "#8c4928" },
-  tiger: { primary: "#f2a63b", accent: "#82521f" },
-  pig: { primary: "#e8a0b2", accent: "#93556a" },
-  cat: { primary: "#8fa7da", accent: "#445d8a" },
-  dog: { primary: "#8bb27a", accent: "#4f7044" },
-};
-
-const statusColorMap: Record<AgentState["status"], string> = {
-  idle: "#64748b",
-  thinking: "#3b82f6",
-  working: "#f59e0b",
-  completed: "#22c55e",
-  error: "#ef4444",
-  chatting: "#8b5cf6",
-};
+const detectionRadius = 2;
+const moveIntervalMs = 220;
+const defaultViewportSize = { width: 800, height: 620 };
 
 const isTypingElement = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) {
@@ -61,140 +46,122 @@ const isTypingElement = (target: EventTarget | null) => {
   return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
 };
 
-const compactTaskLabel = (agent: AgentState) => {
-  const label = agent.currentTask?.title ?? (agent.status === "thinking" ? "아이디어 정리" : "");
-  if (!label) {
-    return "";
+const normalizeMovementKey = (key: string): PlayerState["direction"] | null => {
+  switch (key) {
+    case "ArrowUp":
+    case "w":
+    case "W":
+      return "up";
+    case "ArrowDown":
+    case "s":
+    case "S":
+      return "down";
+    case "ArrowLeft":
+    case "a":
+    case "A":
+      return "left";
+    case "ArrowRight":
+    case "d":
+    case "D":
+      return "right";
+    default:
+      return null;
   }
-  return label.length > 22 ? `${label.slice(0, 21)}…` : label;
 };
 
-const MiniAvatar = ({
-  label,
-  moving,
-  selected,
-  seated,
-  statusColor,
-  primaryColor,
-  accentColor,
-  badge,
-  task,
-  isPlayer = false,
-}: {
-  label: string;
-  moving: boolean;
-  selected: boolean;
-  seated: boolean;
-  statusColor: string;
-  primaryColor: string;
-  accentColor: string;
-  badge: string;
-  task?: string;
-  isPlayer?: boolean;
-}) => {
-  const style = {
-    "--avatar-primary": primaryColor,
-    "--avatar-accent": accentColor,
-    "--avatar-status": statusColor,
-  } as CSSProperties;
-
-  return (
-    <div className={`gather-avatar${moving ? " moving" : ""}${selected ? " selected" : ""}${seated ? " seated" : ""}${isPlayer ? " player" : ""}`} style={style}>
-      <div className="gather-avatar-shadow" />
-      <div className="gather-avatar-figure">
-        <div className="gather-avatar-head">
-          <span>{badge}</span>
-        </div>
-        <div className="gather-avatar-body" />
-        <div className="gather-avatar-status-dot" />
-      </div>
-      {task && <div className="gather-task-bubble">{task}</div>}
-      <div className="gather-name-tag">{label}</div>
-    </div>
-  );
+const getDirectionalStep = (direction: PlayerState["direction"]) => {
+  switch (direction) {
+    case "up":
+      return { x: 0, y: -1 };
+    case "down":
+      return { x: 0, y: 1 };
+    case "left":
+      return { x: -1, y: 0 };
+    case "right":
+      return { x: 1, y: 0 };
+  }
 };
 
-const DeskPod = ({ seat, occupied, nearby }: { seat: OfficeSeat; occupied: boolean; nearby: boolean }) => (
-  <div className="gather-desk-pod" style={{ left: `${seat.deskX}%`, top: `${seat.deskY}%`, width: `${seat.deskW}%`, height: `${seat.deskH}%` }}>
-    <div className="gather-desk-surface" />
-    <div className="gather-monitor" />
-    <div className={`gather-chair${occupied ? " occupied" : ""}${nearby ? " nearby" : ""}`} style={{ left: `${seat.x}%`, top: `${seat.y}%` }} />
-  </div>
-);
+const getTimeOfDayLabel = () => {
+  const hour = new Date().getHours();
+  if (hour < 6) {
+    return "night";
+  }
+  if (hour < 12) {
+    return "morning";
+  }
+  if (hour < 18) {
+    return "afternoon";
+  }
+  return "evening";
+};
 
-const DecorativeFurniture = () => (
-  <>
-    <div className="gather-sofa gather-sofa-left" />
-    <div className="gather-sofa gather-sofa-right" />
-    <div className="gather-plant gather-plant-a" />
-    <div className="gather-plant gather-plant-b" />
-    <div className="gather-plant gather-plant-c" />
-    <div className="gather-coffee-machine" />
-    <div className="gather-meeting-table" />
-  </>
-);
+const getProximityLabel = (distance: number) => {
+  if (distance <= 0.75) {
+    return "바로 옆 채널";
+  }
+  if (distance <= 1.25) {
+    return "근거리 채널";
+  }
+  return "멀리서 들림";
+};
+
+const getProximityVolume = (distance: number) =>
+  Math.min(100, Math.max(18, Math.round((1 - distance / (detectionRadius + 0.25)) * 100)));
+
+const summarizeHistory = (messages: Array<{ role: "user" | "assistant"; content: string }>) =>
+  messages
+    .slice(-4)
+    .map((message) => `${message.role === "user" ? "CEO" : "Agent"}: ${message.content.replace(/\s+/g, " ").slice(0, 80)}`)
+    .join(" | ");
+
+const getNearbyWalkTarget = (origin: OfficePoint, blockedPositions: OfficePoint[]) => {
+  const candidates = [
+    { x: origin.x + 1, y: origin.y },
+    { x: origin.x - 1, y: origin.y },
+    { x: origin.x, y: origin.y + 1 },
+    { x: origin.x, y: origin.y - 1 },
+  ]
+    .map((candidate) => clampOfficePosition(candidate.x, candidate.y))
+    .filter((candidate) => canOccupyOfficePosition(candidate, { blockedPositions }));
+
+  return candidates[0] ?? null;
+};
 
 export function OfficeDashboard2D({ embedded = false, selectedAgentId, onSelectAgent }: OfficeDashboard2DProps) {
   const agents = useAgentStore((state) => state.agents);
   const moveAgents = useAgentStore((state) => state.moveAgents);
+  const updateAgent = useAgentStore((state) => state.updateAgent);
+  const updateAgentStatus = useAgentStore((state) => state.updateAgentStatus);
   const setOfficePlayerPosition = useAgentStore((state) => state.setOfficePlayerPosition);
-  const [isPaused, setIsPaused] = useState(false);
+  const messagesByAgent = useChatStore((state) => state.messagesByAgent);
+  const addMessage = useChatStore((state) => state.addMessage);
+
   const [player, setPlayer] = useState<PlayerState>({
     position: PLAYER_SPAWN,
     direction: "down",
-    sittingSeatId: null,
   });
-  const [playerIsMoving, setPlayerIsMoving] = useState(false);
+  const [viewportSize, setViewportSize] = useState(defaultViewportSize);
   const [internalSelectedAgentId, setInternalSelectedAgentId] = useState<string | null>(null);
-  const [logs, setLogs] = useState<string[]>(["[시스템] Gather 스타일 오피스 레이아웃 로드 완료", "[시스템] 사장 아바타로 직접 걸어다닐 수 있습니다."]);
-  const logRef = useRef<HTMLDivElement>(null);
-  const activeKeysRef = useRef<Set<string>>(new Set());
+  const [conversationAgentId, setConversationAgentId] = useState<string | null>(null);
+  const [dismissedProximityAgentId, setDismissedProximityAgentId] = useState<string | null>(null);
+  const [conversationInput, setConversationInput] = useState("");
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationError, setConversationError] = useState<string | null>(null);
+  const activeDirectionsRef = useRef<PlayerState["direction"][]>([]);
+  const playerRef = useRef(player);
+  const agentsRef = useRef(agents);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const controlled = typeof selectedAgentId !== "undefined";
   const activeSelectedAgentId = controlled ? selectedAgentId : internalSelectedAgentId;
 
-  const seatedAgents = useMemo(
-    () =>
-      agents
-        .map((agent) => {
-          const seat = getSeatByRole(agent.role);
-          if (!seat) {
-            return null;
-          }
-
-          const seatDistance = distanceBetween(agent.position, seat);
-          const isSeated = seatDistance <= 2.2 && agent.targetPosition === null && ["working", "thinking", "completed"].includes(agent.status);
-          if (!isSeated) {
-            return null;
-          }
-
-          return { agentId: agent.id, seatId: seat.id };
-        })
-        .filter((value): value is { agentId: string; seatId: string } => Boolean(value)),
-    [agents],
-  );
-
-  const seatedAgentSeatMap = useMemo(() => new Map(seatedAgents.map((item) => [item.agentId, item.seatId])), [seatedAgents]);
-  const occupiedSeatIds = useMemo(() => new Set(seatedAgents.map((item) => item.seatId)), [seatedAgents]);
-  const previousZoneIdRef = useRef<string | null>(null);
-
-  const currentZone = useMemo(
-    () => getZoneForPosition(player.position),
-    [player.position],
-  );
-
-  const nearestDoor = useMemo(() => findNearestDoor(player.position, 5.5), [player.position]);
+  useEffect(() => {
+    playerRef.current = player;
+  }, [player]);
 
   useEffect(() => {
-    if (!player.sittingSeatId || !occupiedSeatIds.has(player.sittingSeatId)) {
-      return;
-    }
-
-    setPlayer((prev) => ({
-      ...prev,
-      sittingSeatId: null,
-      position: clampOfficePosition(prev.position.x + 5, prev.position.y + 5),
-    }));
-  }, [occupiedSeatIds, player.sittingSeatId]);
+    agentsRef.current = agents;
+  }, [agents]);
 
   useEffect(() => {
     setOfficePlayerPosition(player.position);
@@ -203,72 +170,144 @@ export function OfficeDashboard2D({ embedded = false, selectedAgentId, onSelectA
   useEffect(() => () => setOfficePlayerPosition(null), [setOfficePlayerPosition]);
 
   useEffect(() => {
-    if (isPaused) {
+    if (!viewportRef.current || typeof ResizeObserver === "undefined") {
       return;
     }
 
-    const interval = setInterval(() => {
+    const viewport = viewportRef.current;
+    const updateViewportSize = () => {
+      setViewportSize({
+        width: viewport.clientWidth || defaultViewportSize.width,
+        height: viewport.clientHeight || defaultViewportSize.height,
+      });
+    };
+
+    updateViewportSize();
+    const observer = new ResizeObserver(updateViewportSize);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
       moveAgents();
     }, 50);
 
-    return () => clearInterval(interval);
-  }, [isPaused, moveAgents]);
+    return () => window.clearInterval(intervalId);
+  }, [moveAgents]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      const keys = activeKeysRef.current;
-      if (isPaused || player.sittingSeatId || keys.size === 0) {
-        setPlayerIsMoving(false);
+    const intervalId = window.setInterval(() => {
+      const direction = activeDirectionsRef.current[activeDirectionsRef.current.length - 1];
+      if (!direction) {
         return;
       }
 
-      let dx = 0;
-      let dy = 0;
-
-      if (keys.has("ArrowUp") || keys.has("w") || keys.has("W")) {
-        dy -= 1;
-      }
-      if (keys.has("ArrowDown") || keys.has("s") || keys.has("S")) {
-        dy += 1;
-      }
-      if (keys.has("ArrowLeft") || keys.has("a") || keys.has("A")) {
-        dx -= 1;
-      }
-      if (keys.has("ArrowRight") || keys.has("d") || keys.has("D")) {
-        dx += 1;
-      }
-
-      if (dx === 0 && dy === 0) {
-        setPlayerIsMoving(false);
-        return;
-      }
-
-      const distance = Math.sqrt(dx * dx + dy * dy) || 1;
-      const vx = (dx / distance) * movementSpeed;
-      const vy = (dy / distance) * movementSpeed;
-      const nextPosition = moveWithinOffice(player.position, { x: vx, y: vy }, {
-        blockedPositions: agents.map((agent) => agent.position),
-        collisionRadius: 5.2,
+      const currentPlayer = playerRef.current;
+      const nextPosition = moveWithinOffice(currentPlayer.position, getDirectionalStep(direction), {
+        blockedPositions: agentsRef.current.map((agent) => agent.position),
       });
-      const didMove = distanceBetween(player.position, nextPosition) > 0.01;
 
-      if (didMove) {
-        setPlayer((prev) => ({
+      setPlayer((prev) => {
+        if (
+          prev.position.x === nextPosition.x &&
+          prev.position.y === nextPosition.y &&
+          prev.direction === direction
+        ) {
+          return prev;
+        }
+
+        return {
           position: nextPosition,
-          direction: getDirectionFromVector(vx, vy, prev.direction),
-          sittingSeatId: null,
-        }));
-      } else {
-        setPlayer((prev) => ({
-          ...prev,
-          direction: getDirectionFromVector(vx, vy, prev.direction),
-        }));
-      }
-      setPlayerIsMoving(didMove);
-    }, 32);
+          direction,
+        };
+      });
+    }, moveIntervalMs);
 
-    return () => clearInterval(interval);
-  }, [agents, isPaused, player.position, player.sittingSeatId]);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const selectAgent = (id: string | null) => {
+    if (!controlled) {
+      setInternalSelectedAgentId(id);
+    }
+    onSelectAgent?.(id);
+  };
+
+  const proximityState = useMemo(() => {
+    const candidate = agents
+      .map((agent) => ({ agent, distance: distanceBetween(player.position, agent.position) }))
+      .filter((item) => item.distance <= detectionRadius)
+      .sort((left, right) => left.distance - right.distance)[0];
+
+    if (!candidate) {
+      return null;
+    }
+
+    return {
+      agent: candidate.agent,
+      distance: candidate.distance,
+      label: getProximityLabel(candidate.distance),
+      volume: getProximityVolume(candidate.distance),
+    };
+  }, [agents, player.position]);
+  const proximityAgent = proximityState?.agent ?? null;
+
+  const currentZoneLabel = getZoneForPosition(player.position)?.label ?? getLocationLabel(player.position);
+  const talkTooltip = proximityAgent ? `Press [Space] to talk · ${proximityState?.label ?? "근접 채널"}` : null;
+  const currentConversationAgent = agents.find((agent) => agent.id === (conversationAgentId ?? "")) ?? null;
+  const proximityPreview = !currentConversationAgent && Boolean(proximityAgent) && dismissedProximityAgentId !== proximityAgent?.id;
+  const panelAgent = currentConversationAgent ?? (proximityPreview ? proximityAgent : null);
+  const conversationMessages = panelAgent ? messagesByAgent[panelAgent.id] ?? [] : [];
+  const panelLocationLabel = panelAgent ? getLocationLabel(panelAgent.position) : null;
+  const panelProximityLabel = panelAgent?.id === proximityAgent?.id ? proximityState?.label ?? null : "직접 대화 유지 중";
+  const panelProximityVolume = panelAgent?.id === proximityAgent?.id ? proximityState?.volume ?? null : null;
+  const activeDoorIds = useMemo(() => {
+    const doorIds = new Set<string>();
+    const trackedPositions = [
+      player.position,
+      ...agents.flatMap((agent) => (agent.targetPosition ? [agent.position, agent.targetPosition] : [agent.position])),
+    ];
+
+    trackedPositions.forEach((position) => {
+      const door = getDoorLaneForPosition(position);
+      if (door) {
+        doorIds.add(door.id);
+      }
+    });
+
+    return [...doorIds];
+  }, [agents, player.position]);
+
+  useEffect(() => {
+    if (!proximityAgent) {
+      setDismissedProximityAgentId(null);
+    }
+  }, [proximityAgent]);
+
+  const cameraTransform = useMemo(() => {
+    const worldWidth = OFFICE_GRID_WIDTH * TILE_SIZE;
+    const worldHeight = OFFICE_GRID_HEIGHT * TILE_SIZE;
+    const playerPixelX = player.position.x * TILE_SIZE + TILE_SIZE / 2;
+    const playerPixelY = player.position.y * TILE_SIZE + TILE_SIZE / 2;
+    const minX = Math.min(0, viewportSize.width - worldWidth);
+    const minY = Math.min(0, viewportSize.height - worldHeight);
+    const x = Math.min(0, Math.max(minX, viewportSize.width / 2 - playerPixelX));
+    const y = Math.min(0, Math.max(minY, viewportSize.height / 2 - playerPixelY));
+
+    return `translate3d(${x}px, ${y}px, 0)`;
+  }, [player.position, viewportSize]);
+
+  const handleOpenConversation = () => {
+    if (!proximityAgent) {
+      return;
+    }
+
+    setConversationAgentId(proximityAgent.id);
+    setDismissedProximityAgentId(null);
+    setConversationError(null);
+    selectAgent(proximityAgent.id);
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -276,24 +315,31 @@ export function OfficeDashboard2D({ embedded = false, selectedAgentId, onSelectA
         return;
       }
 
-      if (movementKeys.has(event.key)) {
-        activeKeysRef.current.add(event.key);
+      const direction = normalizeMovementKey(event.key);
+      if (direction) {
+        activeDirectionsRef.current = [...activeDirectionsRef.current.filter((item) => item !== direction), direction];
+        setPlayer((prev) => (prev.direction === direction ? prev : { ...prev, direction }));
         event.preventDefault();
+        return;
+      }
+
+      if (event.key === " " && !event.repeat) {
+        event.preventDefault();
+        handleOpenConversation();
       }
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
-      if (movementKeys.has(event.key)) {
-        activeKeysRef.current.delete(event.key);
-        if (activeKeysRef.current.size === 0) {
-          setPlayerIsMoving(false);
-        }
+      const direction = normalizeMovementKey(event.key);
+      if (!direction) {
+        return;
       }
+
+      activeDirectionsRef.current = activeDirectionsRef.current.filter((item) => item !== direction);
     };
 
     const handleBlur = () => {
-      activeKeysRef.current.clear();
-      setPlayerIsMoving(false);
+      activeDirectionsRef.current = [];
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -305,306 +351,138 @@ export function OfficeDashboard2D({ embedded = false, selectedAgentId, onSelectA
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", handleBlur);
     };
-  }, []);
+  }, [proximityAgent]);
 
-  useEffect(() => {
-    if (!logRef.current) {
-      return;
-    }
-    logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [logs]);
-
-  useEffect(() => {
-    if (embedded) {
+  const handleSendConversation = async () => {
+    if (!window.kafi || !currentConversationAgent || !conversationInput.trim() || conversationLoading) {
       return;
     }
 
-    const activeAgents = agents.filter((agent) => agent.status === "working" || agent.status === "thinking");
-    if (activeAgents.length === 0) {
-      return;
-    }
-
-    setLogs((prev) => {
-      const nextLine = `[${new Date().toLocaleTimeString()}] ${activeAgents.map((agent) => `${agent.name}:${agent.status}`).join(", ")}`;
-      if (prev[prev.length - 1] === nextLine) {
-        return prev;
-      }
-      return [...prev.slice(-30), nextLine];
+    const userMessage = conversationInput.trim();
+    const nearbyAgents = agents.filter(
+      (agent) => agent.id !== currentConversationAgent.id && distanceBetween(agent.position, currentConversationAgent.position) <= detectionRadius,
+    );
+    const userHistorySummary = summarizeHistory(conversationMessages);
+    const prompt = buildSpatialConversationPrompt({
+      agent: currentConversationAgent,
+      userMessage,
+      currentLocation: getLocationLabel(currentConversationAgent.position),
+      nearbyAgents,
+      timeOfDay: getTimeOfDayLabel(),
+      userHistorySummary,
     });
-  }, [agents, embedded]);
 
-  useEffect(() => {
-    if (embedded || !currentZone || previousZoneIdRef.current === currentZone.id) {
-      return;
+    setConversationLoading(true);
+    setConversationError(null);
+    addMessage(currentConversationAgent.id, "user", userMessage);
+    setConversationInput("");
+
+    const previousStatus = currentConversationAgent.status;
+    if (previousStatus === "idle") {
+      updateAgentStatus(currentConversationAgent.id, "chatting");
     }
 
-    previousZoneIdRef.current = currentZone.id;
-    setLogs((prev) => [...prev.slice(-30), `[${new Date().toLocaleTimeString()}] ${currentZone.label} 구역으로 이동했습니다.`]);
-  }, [currentZone, embedded]);
+    try {
+      const response = await window.kafi.ollamaChat({
+        message: prompt,
+        agentId: currentConversationAgent.id,
+      });
 
-  const nearestSeat = useMemo(() => {
-    if (player.sittingSeatId) {
-      return OFFICE_SEATS.find((seat) => seat.id === player.sittingSeatId) ?? null;
-    }
+      const responseText = response.response || response.error || "응답을 받지 못했습니다.";
+      const parsed = parseSpatialConversationResponse(responseText);
+      addMessage(currentConversationAgent.id, "assistant", parsed.message);
 
-    const availableSeats = OFFICE_SEATS
-      .filter((seat) => !occupiedSeatIds.has(seat.id))
-      .map((seat) => ({ seat, distance: distanceBetween(player.position, seat) }))
-      .filter((item) => item.distance <= seatSnapRange)
-      .sort((left, right) => left.distance - right.distance);
-
-    return availableSeats[0]?.seat ?? null;
-  }, [occupiedSeatIds, player.position, player.sittingSeatId]);
-
-  const nearestAgent = useMemo(() => {
-    const candidates = agents
-      .map((agent) => ({ agent, distance: distanceBetween(player.position, agent.position) }))
-      .filter((item) => item.distance <= interactionRange)
-      .sort((left, right) => left.distance - right.distance);
-
-    return candidates[0]?.agent ?? null;
-  }, [agents, player.position]);
-
-  const interactionHint = useMemo(() => {
-    if (player.sittingSeatId) {
-      return "E: 자리에서 일어나기";
-    }
-    if (nearestSeat) {
-      return `E: ${nearestSeat.label}에 앉기`;
-    }
-    if (nearestDoor) {
-      return `E: ${getDoorInteractionLabel(nearestDoor, player.position)}`;
-    }
-    if (nearestAgent) {
-      return `E: ${nearestAgent.name} 살펴보기`;
-    }
-    return "WASD / Arrow Keys 로 이동";
-  }, [nearestAgent, nearestDoor, nearestSeat, player.position, player.sittingSeatId]);
-
-  const selectAgent = (id: string | null) => {
-    if (!controlled) {
-      setInternalSelectedAgentId(id);
-    }
-    onSelectAgent?.(id);
-  };
-
-  const handleInteract = () => {
-    if (player.sittingSeatId) {
-      setPlayer((prev) => ({
-        ...prev,
-        sittingSeatId: null,
-        position: clampOfficePosition(prev.position.x + 4, prev.position.y + 5),
-      }));
-      return;
-    }
-
-    if (nearestSeat) {
-      setPlayer((prev) => ({
-        ...prev,
-        position: { x: nearestSeat.x, y: nearestSeat.y },
-        direction: "down",
-        sittingSeatId: nearestSeat.id,
-      }));
-      return;
-    }
-
-    if (nearestDoor) {
-      const nextDoorPosition = getDoorTransitionTarget(nearestDoor, player.position);
-      if (!canOccupyOfficePosition(nextDoorPosition, { blockedPositions: agents.map((agent) => agent.position), collisionRadius: 5.2 })) {
-        return;
+      if (parsed.action === "walk") {
+        const walkTarget = getNearbyWalkTarget(player.position, agents.filter((agent) => agent.id !== currentConversationAgent.id).map((agent) => agent.position));
+        if (walkTarget) {
+          updateAgent(currentConversationAgent.id, {
+            targetPosition: walkTarget,
+            behavior: "wandering",
+          });
+        }
       }
-      setPlayer((prev) => ({
-        ...prev,
-        position: nextDoorPosition,
-        direction: getDirectionFromVector(nextDoorPosition.x - prev.position.x, nextDoorPosition.y - prev.position.y, prev.direction),
-      }));
-      if (!embedded) {
-        setLogs((prev) => [...prev.slice(-30), `[${new Date().toLocaleTimeString()}] ${getDoorInteractionLabel(nearestDoor, player.position)}`]);
-      }
-      return;
-    }
 
-    if (nearestAgent) {
-      selectAgent(nearestAgent.id);
+      if (parsed.action === "wave" && previousStatus === "idle") {
+        updateAgentStatus(currentConversationAgent.id, "chatting");
+        window.setTimeout(() => {
+          updateAgentStatus(currentConversationAgent.id, "idle");
+        }, 1200);
+      } else if (previousStatus === "idle") {
+        updateAgentStatus(currentConversationAgent.id, "idle");
+      }
+    } catch {
+      setConversationError("대화 중 오류가 발생했습니다.");
+      if (previousStatus === "idle") {
+        updateAgentStatus(currentConversationAgent.id, "idle");
+      }
+    } finally {
+      setConversationLoading(false);
     }
   };
-
-  useEffect(() => {
-    const handleInteractKey = (event: KeyboardEvent) => {
-      if (isTypingElement(event.target)) {
-        return;
-      }
-
-      if ((event.key === "e" || event.key === "E" || event.key === "Enter") && !event.repeat) {
-        event.preventDefault();
-        handleInteract();
-      }
-    };
-
-    window.addEventListener("keydown", handleInteractKey);
-    return () => window.removeEventListener("keydown", handleInteractKey);
-  }, [handleInteract]);
-
-  const selectedAgent = useMemo(() => agents.find((agent) => agent.id === activeSelectedAgentId) ?? null, [activeSelectedAgentId, agents]);
 
   return (
-    <div className={`pixel-office-container${embedded ? " embedded" : ""}`} onClick={() => selectAgent(null)}>
-      <div className="pixel-office-header">
-        <h1>{embedded ? "Gather Office" : "Animal Office"}</h1>
-        <div className="pixel-office-header-meta">
-          <Zap size={15} color="#facc15" />
-          <span>{embedded ? "desk pod와 room이 살아있는 팀 오피스" : "6종 동물, 7개 에이전트 협업 시뮬레이션"}</span>
-        </div>
-      </div>
+    <div className={`spatial-office-shell${embedded ? " embedded" : ""}`}>
+      <div ref={viewportRef} className="spatial-office-stage-shell">
+        <OfficeMap
+          cameraTransform={cameraTransform}
+          player={player}
+          agents={agents}
+          selectedAgentId={activeSelectedAgentId}
+          proximityAgentId={proximityAgent?.id ?? null}
+          activeDoorIds={activeDoorIds}
+          talkTooltip={talkTooltip}
+          onSelectAgent={selectAgent}
+        />
 
-      <div className={`pixel-office-map gather-office-map${embedded ? " embedded" : ""}`}>
-        {OFFICE_ZONES.map((zone) => (
-          <div
-            key={zone.id}
-            className={`gather-zone ${zone.variant}${currentZone?.id === zone.id ? " active" : ""}`}
-            style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.w}%`, height: `${zone.h}%` }}
-          >
-            <div className="gather-zone-label">{zone.label}</div>
-          </div>
-        ))}
+        <OfficeHUD
+          agents={agents}
+          currentZoneLabel={currentZoneLabel}
+          selectedAgentId={activeSelectedAgentId}
+          playerPosition={player.position}
+          proximityAgent={proximityAgent}
+          proximityLabel={proximityState?.label ?? null}
+          proximityVolume={proximityState?.volume ?? null}
+          talkHintVisible={Boolean(proximityAgent)}
+        />
 
-        {OFFICE_WALLS.map((wall) => (
-          <div key={wall.id} className="gather-wall" style={{ left: `${wall.x}%`, top: `${wall.y}%`, width: `${wall.w}%`, height: `${wall.h}%` }} />
-        ))}
-
-        {OFFICE_DOORS.map((door) => (
-          <div
-            key={door.id}
-            className={`gather-door${nearestDoor?.id === door.id ? " nearby" : ""}`}
-            style={{ left: `${door.x}%`, top: `${door.y}%`, width: `${door.w}%`, height: `${door.h}%` }}
-          />
-        ))}
-
-        <DecorativeFurniture />
-
-        {OFFICE_SEATS.map((seat) => {
-          const occupied = occupiedSeatIds.has(seat.id) || player.sittingSeatId === seat.id;
-          const nearby = !player.sittingSeatId && distanceBetween(player.position, seat) <= seatSnapRange;
-          return <DeskPod key={seat.id} seat={seat} occupied={occupied} nearby={nearby} />;
-        })}
-
-        <div
-          className={`pixel-player${player.sittingSeatId ? " sitting" : ""}`}
-          style={{
-            left: `${player.position.x}%`,
-            top: `${player.position.y + (player.sittingSeatId ? 2.2 : 0)}%`,
-            transform: `translate(-50%, -50%) scaleX(${player.direction === "left" ? -1 : 1})`,
-            zIndex: Math.floor(player.position.y) + 120,
+        <OfficeConversationPanel
+          open={Boolean(currentConversationAgent || proximityPreview)}
+          preview={proximityPreview}
+          agent={panelAgent}
+          messages={conversationMessages}
+          input={conversationInput}
+          loading={conversationLoading}
+          error={conversationError}
+          locationLabel={panelLocationLabel}
+          proximityLabel={panelProximityLabel}
+          proximityVolume={panelProximityVolume}
+          onChangeInput={setConversationInput}
+          onStartConversation={handleOpenConversation}
+          onClose={() => {
+            if (currentConversationAgent) {
+              setConversationAgentId(null);
+            } else if (proximityAgent) {
+              setDismissedProximityAgentId(proximityAgent.id);
+            }
+            setConversationError(null);
           }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <MiniAvatar
-            label="사장"
-            moving={playerIsMoving && !player.sittingSeatId}
-            selected={false}
-            seated={Boolean(player.sittingSeatId)}
-            statusColor="#2563eb"
-            primaryColor="#f9fafb"
-            accentColor="#2563eb"
-            badge="CEO"
-            isPlayer
-          />
-        </div>
-
-        {agents.map((agent) => {
-          const species = getSpeciesMeta(agent.species);
-          const palette = speciesPalette[agent.species];
-          const isSelected = activeSelectedAgentId === agent.id;
-          const isSeated = seatedAgentSeatMap.has(agent.id);
-          return (
-            <div
-              key={agent.id}
-              className={`pixel-agent${isSelected ? " active" : ""}${isSeated ? " seated" : ""}`}
-              style={{
-                left: `${agent.position.x}%`,
-                top: `${agent.position.y + (isSeated ? 2.2 : 0)}%`,
-                transform: `translate(-50%, -50%) scaleX(${agent.direction === "left" ? -1 : 1})`,
-                zIndex: Math.floor(agent.position.y) + 100,
-              }}
-              onClick={(event) => {
-                event.stopPropagation();
-                selectAgent(agent.id);
-                if (!embedded) {
-                  setLogs((prev) => [...prev.slice(-30), `[${new Date().toLocaleTimeString()}] ${agent.name} 자리로 이동`]);
-                }
-              }}
-            >
-              <MiniAvatar
-                label={agent.name}
-                moving={Boolean(agent.targetPosition)}
-                selected={isSelected}
-                seated={isSeated}
-                statusColor={statusColorMap[agent.status]}
-                primaryColor={palette.primary}
-                accentColor={palette.accent}
-                badge={species.label.slice(0, 1)}
-                task={compactTaskLabel(agent)}
-              />
-            </div>
-          );
-        })}
-
-        <div className="pixel-office-hud gather-office-hud">
-          <div className="gather-office-hud-row">
-            <MapPin size={14} />
-            <strong>Move & Interact</strong>
-          </div>
-          <span>현재 구역: {currentZone?.label ?? "Walkway"}</span>
-          <span>{interactionHint}</span>
-          <span>근처 팀원에게 다가가면 상호작용할 수 있습니다.</span>
-        </div>
-
-        {selectedAgent && (
-          <div className={`pixel-speech-bubble pixel-agent-card gather-agent-card${embedded ? " embedded" : ""}`} onClick={(event) => event.stopPropagation()}>
-            <div className="pixel-agent-card-header">
-              <div className="gather-agent-card-badge">{getSpeciesMeta(selectedAgent.species).label.slice(0, 1)}</div>
-              <div style={{ flex: 1 }}>
-                <div className="pixel-agent-card-title">{selectedAgent.name}</div>
-                <div className="pixel-agent-card-meta">{getSpeciesMeta(selectedAgent.species).label} · {selectedAgent.role}</div>
-              </div>
-            </div>
-            <div className="pixel-agent-card-body">
-              <strong>상태:</strong> {selectedAgent.status}<br />
-              <strong>작업:</strong> {selectedAgent.currentTask?.title ?? "없음"}<br />
-              <strong>좌석:</strong> {seatedAgentSeatMap.has(selectedAgent.id) ? "착석 중" : "이동 중 또는 대기"}<br />
-              <strong>페르소나:</strong> {selectedAgent.persona?.description ?? "설명 없음"}
-            </div>
-          </div>
-        )}
+          onSend={() => void handleSendConversation()}
+        />
       </div>
 
       {!embedded && (
-        <div className="pixel-ui-bottom">
-          <div className="pixel-log-box" ref={logRef}>
-            {logs.map((log, index) => (
-              <div key={`${log}-${index}`} style={{ marginBottom: "4px", opacity: 1 - index / 40 }}>{log}</div>
-            ))}
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "220px", padding: "15px" }}>
-            <button className="pixel-btn" style={{ flex: 1, background: isPaused ? "#27ae60" : "#c0392b" }} onClick={() => setIsPaused((prev) => !prev)}>
-              {isPaused ? "시뮬레이션 재개" : "시뮬레이션 정지"}
-            </button>
-            <button
-              className="pixel-btn"
-              style={{ flex: 1 }}
-              onClick={() => {
-                setPlayer({
-                  position: PLAYER_SPAWN,
-                  direction: "down",
-                  sittingSeatId: null,
-                });
-                setLogs((prev) => [...prev.slice(-30), `[${new Date().toLocaleTimeString()}] 사장 아바타 위치를 초기화했습니다.`]);
-              }}
-            >
-              사장 위치 초기화
-            </button>
-          </div>
+        <div className="spatial-office-footer">
+          <span>WASD / Arrow Keys: Move</span>
+          <span>Space: Talk</span>
+          <button
+            type="button"
+            onClick={() => {
+              setPlayer({ position: PLAYER_SPAWN, direction: "down" });
+              setConversationAgentId(null);
+            }}
+          >
+            Reset Position
+          </button>
         </div>
       )}
     </div>

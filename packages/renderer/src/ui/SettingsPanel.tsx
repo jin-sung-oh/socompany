@@ -4,18 +4,18 @@ import { useTranslation } from "../hooks/useTranslation";
 import { getSpeciesMeta, normalizeSettings } from "../data/agentCatalog";
 import type { Persona } from "@kafi/shared";
 import { Save, RefreshCw, CheckCircle, XCircle, AlertCircle } from "lucide-react";
+import { LoadingSkeleton } from "./components/LoadingSkeleton";
 
 export const SettingsPanel = () => {
-  const { settings, status, setSettings, load, save } = useSettingsStore();
+  const { settings, status, setSettings, save } = useSettingsStore();
   const { t } = useTranslation();
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
 
   useEffect(() => {
-    void load();
     void checkConnection();
-  }, [load]);
+  }, []);
 
   const checkConnection = async () => {
     if (!window.kafi?.ollamaCheck) {
@@ -112,6 +112,7 @@ export const SettingsPanel = () => {
               <RefreshCw size={16} className={isLoadingModels ? "animate-spin" : ""} />
             </button>
           </div>
+          {isLoadingModels && <LoadingSkeleton compact lines={2} className="settings-loading-skeleton" />}
         </label>
 
         <label className="field">
@@ -137,17 +138,17 @@ export const SettingsPanel = () => {
         </label>
 
         <label className="field">
-          <span className="label-text">캐릭터 보기</span>
+          <span className="label-text">오피스 보기</span>
           <select value={settings.characterType} onChange={(event) => setSettings({ ...settings, characterType: event.target.value as typeof settings.characterType })}>
-            <option value="3d">3D 실험 보기</option>
-            <option value="video">비디오/일반 뷰</option>
+            <option value="3d">3D 커맨드 덱</option>
+            <option value="video">2D 기본 오피스</option>
           </select>
         </label>
 
         <label className="field">
           <div className="flex justify-between items-center">
             <span className="label-text">위젯 투명도</span>
-            <span className="text-sm font-medium">{settings.widgetOpacity}%</span>
+            <span className="text-sm font-medium text-kafi-accent-600">{settings.widgetOpacity}%</span>
           </div>
           <input
             type="range"

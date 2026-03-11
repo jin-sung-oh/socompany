@@ -5,6 +5,8 @@ import { useChatStore } from "../stores/useChatStore";
 import { useSettingsStore } from "../stores/useSettingsStore";
 import { useTranslation } from "../hooks/useTranslation";
 import { getAgentAsset, getSpeciesMeta } from "../data/agentCatalog";
+import { EmptyState } from "./components/EmptyState";
+import { TypingIndicator } from "./components/TypingIndicator";
 
 const states = ["idle", "thinking", "working", "completed", "error"] as const;
 type WidgetState = (typeof states)[number];
@@ -14,7 +16,7 @@ export const WidgetView = () => {
   const addMessage = useChatStore((state) => state.addMessage);
   const messagesByAgent = useChatStore((state) => state.messagesByAgent);
   const updateAgentStatus = useAgentStore((state) => state.updateAgentStatus);
-  const { settings, load: loadSettings } = useSettingsStore();
+  const settings = useSettingsStore((state) => state.settings);
   const { t } = useTranslation();
   const pmAgent = useMemo(() => agents.find((agent) => agent.role === "PM Agent") ?? agents[0] ?? null, [agents]);
   const species = pmAgent ? getSpeciesMeta(pmAgent.species) : null;
@@ -25,10 +27,6 @@ export const WidgetView = () => {
   const [isLoading, setIsLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const messages = pmAgent ? messagesByAgent[pmAgent.id] ?? [] : [];
-
-  useEffect(() => {
-    void loadSettings();
-  }, [loadSettings]);
 
   useEffect(() => {
     if (pmAgent?.status && states.includes(pmAgent.status as WidgetState)) {
@@ -141,7 +139,7 @@ export const WidgetView = () => {
             )}
 
             {messages.length === 0 ? (
-              <div className="ceo-empty-state">PM에게 첫 지시를 내려보세요.</div>
+              <EmptyState description="PM에게 첫 지시를 내려보세요." className="ceo-empty-state" compact />
             ) : (
               messages.map((msg) => (
                 <div key={msg.id} className={`ceo-chat-bubble ${msg.role}`}>
@@ -153,11 +151,7 @@ export const WidgetView = () => {
 
             {isLoading && (
               <div className="ceo-chat-bubble assistant">
-                <div className="flex items-center gap-1">
-                  <span className="animate-pulse">●</span>
-                  <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
-                  <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
-                </div>
+                <TypingIndicator compact tone="accent" label="PM 응답 생성 중" />
               </div>
             )}
             <div ref={chatEndRef} />

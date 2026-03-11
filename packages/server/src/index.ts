@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import fastifySocketIO from "fastify-socket.io";
 import type { Server as SocketIOServer, Socket } from "socket.io";
 import agentRoutes from "./routes/agent.routes.js";
+import integrationRoutes from "./routes/integration.routes.js";
 import { enqueueTask, primeConnection, setEmitter } from "./orchestrator.js";
 
 const fastify = Fastify({
@@ -22,6 +23,7 @@ fastify.register(fastifySocketIO, {
 });
 
 fastify.register(agentRoutes, { prefix: "/api" });
+fastify.register(integrationRoutes, { prefix: "/api" });
 
 fastify.get("/health", async () => {
   return { status: "ok", timestamp: new Date().toISOString() };
@@ -52,7 +54,7 @@ fastify.ready((err) => {
         socket.emit("task:error", { message: "Task is required" });
         return;
       }
-      enqueueTask(task);
+      enqueueTask(task, "socket");
       socket.emit("task:queued", { task });
     });
   });
